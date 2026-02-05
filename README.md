@@ -1,0 +1,125 @@
+# Preacher: Paper-to-Video Agentic System - ICCV 2025
+
+We present [Preacher](https://arxiv.org/abs/2508.09632) — an intelligent agent system that automatically transforms scientific papers into video abstracts. Inspired by how humans create video summaries, it adopts a top-down, hierarchical planning paradigm to produce generation-model-compatible scripts for video-abstract production, then invokes the appropriate video-creation tools to carry out the entire process autonomously.
+
+## Quick Start
+### Installation
+```bash
+conda create -n preacher python=3.10
+conda activate preacher
+pip install -r requirements.txt
+```
+
+### Setup
+```python
+input_path = Path("dataset/greengard.pdf").resolve()
+output_dir = Path("output").resolve()
+llm_config_path=Path("config.yml").resolve()
+
+agent = Preacher(
+    input_path=input_path, output_dir=output_dir, llm_config_path=llm_config_path,
+    plan_by="GEMINI",
+    eval_by="GEMINI",
+    art_work="GEMINI",
+    )
+```
+
++ Put the paper PDF at 'dataset' document.
++ Set the 'input_path' as your pdf file path.
++ Here we simplify the configuration of the entire pipeline by reducing the multiple roles in the multi-agent framework to just three agent types. 'plan_by' specifies the agent used for planning; 'eval_by' specifies the agent used for review; 'art_work' specifies the agent used for creation. Set the parameters with your plan.
++ Fill in the API key in `config.yml` following the notice below.
++ Run `python run_pdf.py`.
+
+
+### Notice
+If you use the API, you must provide its corresponding API key. We have preset code for several agents, and you can also customize your own agent by following our examples. In addition, we currently use Qwen-tts, Wanx-2.2, Tavus, etc., as video-generation tools; if you wish to switch to others, you will need to reconfigure accordingly.
+
+Different agent combinations can significantly affect the overall results.
+
+This method relies on external APIs and incurs monetary costs—typically within a few dollars, depending on the chosen API provider.
+
+## Case Study 
+<table border="0" style="width:100%; text-align:center; margin-top:20px;">
+  <tr>
+    <td>
+      <video src="https://github.com/user-attachments/assets/c4d802b9-01da-4cc1-9767-f3f2192df410"
+             width="100%" controls autoplay loop></video>
+      <p style="margin:4px 0; font-size:14px;">A Fast Algorithm for Particle Simulations, L. Greencard and V. Rokhlin, Journal of Computational Physics, 1987</p>
+    </td>
+    <td>
+      <video src="https://github.com/user-attachments/assets/98705c1b-6f6b-40c8-81a5-f44f5304f697"
+             width="100%" controls autoplay loop></video>
+      <p style="margin:4px 0; font-size:14px;">Aquaporins in Plants, Christophe Maurel and Yann Boursiac, et al, Physiol, 2015</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <video src="https://github.com/user-attachments/assets/30c9fa22-05a9-405c-8199-147cf89bae0e"
+             width="100%" controls autoplay loop></video>
+      <p style="margin:4px 0; font-size:14px;">A reinforced lunar dynamo recorded by Chang'e-6 farside basalt, Shuhui Cai and Kaixian Qi, et al, Nature, 2024</p>
+    </td>
+    <td>
+      <video src="https://github.com/user-attachments/assets/7e190b0c-dedd-47aa-9bee-4045f225d8e7"
+             width="100%" controls autoplay loop></video>
+      <p style="margin:4px 0; font-size:14px;">On the Existence of Hermitian-Yang-Mills Connections in Stable Vector Bundles, K Uhlenbeck and ST Yau, Comm. Pure Appl. Math, 1986</p>
+    </td>
+  </tr>
+</table>
+ 
+## Workflow
+Preacher operates in four iterative phases:
+1. High-Level Planning – LLM reads the PDF and decides what scenes to create.
+2. Low-Level Planning –  Preacher plans every detail of each video segment at a fine-grained level, thereby improving the usability of the agent’s planning results and reducing the error rate.
+<p align="center">
+  <img src="assets/plan.png" alt="plan" width="70%">
+</p>
+ 
+  3. Video Generation – Calls the best engine (Manim, Wanxiang, Tavus, etc.) to produce visuals and audio. The evaluator agent evaluates the output of each stage and schedules regeneration for any deliverables that do not meet the criteria.
+
+<p align="center">
+  <img src="assets/workflow.png" alt="workflow" width="70%">
+</p>
+
+## Evaluation
+<p align="center">
+  <img src="assets/result.png" alt="plan" width="95%">
+</p>
+
+We utilize GPT-4 to evaluate the quality of the final video, with GPT-4 providing scores ranging from 1 to 5 in the following aspects: (i) Accuracy: Correctness of the video content, free from errors. (ii) Professionalism: Use of domain-specific knowledge and expertise. (iii) Aesthetic Quality: Visual appeal, design, and overall presentation. (iv) Alignment with the Paper: Semantic Alignment with the paper. Additionally, we use the CLIP text-image similarity score (CLIP) and Aesthetic Score (AE) to evaluate the consistency with the prompt and aesthetic quality. Preacher outperforms existing methods in six out of ten metrics, notably in accuracy, professionalism, and alignment with the paper.
+
+
+## Directory Layout (per run)
+
+<pre>
+```text
+output/(PDFNAME)/
+├── logs/
+│   ├── llm_qa.md
+│   ├── workflow.log
+│   ├── highplan.txt
+│   └── final_video.mp4
+├── scene_0/
+│   ├── audio.wav
+│   ├── video.mp4
+│   └── scene0.mp4
+├── scene_1/
+│   ├── audio.wav
+│   ├── video.mp4
+│   └── scene1.mp4
+└── scene_2/
+    ├── audio.wav
+    ├── video.mp4
+    └── scene2.mp4
+```
+</pre>
+## Acknowledgement
+We use Docling (https://github.com/docling-project/docling), Manim (https://github.com/3b1b/manim) and PyMol-open-source (https://github.com/schrodinger/pymol-open-source) to create professional video clip. Thanks for their open-source work. We also use Wanx (https://wan.video/), Qwen-tts (https://qwenlm.github.io/blog/qwen-tts/) and Tavus (https://www.tavus.io/) as video generation tools.
+## BibTex
+```
+@article{liu2025preacher,
+  title={Preacher: Paper-to-Video Agentic System},
+  author={Liu, Jingwei and Yang, Ling and Luo, Hao and Li, Fan Wang Hongyan and Wang, Mengdi},
+  journal={arXiv preprint arXiv:2508.09632},
+  year={2025}
+}
+```
