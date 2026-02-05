@@ -66,10 +66,10 @@ class Wanxiang_image():
             if data["output"]["task_status"] == "SUCCEEDED":
                 return data["output"]["results"][0]["url"] 
             elif data["output"]["task_status"]  == "FAILED":
-                print(f"task fail: {data["output"]["task_status"] }")
+                print(f'task fail: {data["output"]["task_status"] }')
                 return None
             else:
-                print(f"task status: {data["output"]["task_status"] }")
+                print(f'task status: {data["output"]["task_status"] }')
                 return None
         except requests.exceptions.RequestException as e:
             print(f"checking status fail: {e}")

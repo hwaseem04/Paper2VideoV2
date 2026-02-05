@@ -516,7 +516,7 @@ class Preacher:
                 pass
             else:
                 
-                prompt_mol = f"Please return the most related name  'X' of the protein in {plan["source"]} and {plan["prompt"]}. Keep it concise and breif."+" Return the name ONLY"
+                prompt_mol = f'Please return the most related name  "X" of the protein in {plan["source"]} and {plan["prompt"]}. Keep it concise and breif."+" Return the name ONLY'
                 
                 pdb_name = eval(
                     self.evaluator(

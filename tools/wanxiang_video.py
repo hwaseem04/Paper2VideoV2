@@ -66,10 +66,10 @@ class Wanxiang_video():
             if data["output"]["task_status"] == "SUCCEEDED":
                 return data["output"]["video_url"] 
             elif data["output"]["task_status"]  == "FAILED":
-                print(f"task is failed: {data["output"]["task_status"] }")
+                print(f'task is failed: {data["output"]["task_status"] }')
                 return None
             else:
-                print(f"task status: {data["output"]["task_status"] }")
+                print(f'task status: {data["output"]["task_status"] }')
                 return None
         except requests.exceptions.RequestException as e:
             print(f"checking status failed: {e}")
