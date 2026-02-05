@@ -6,7 +6,7 @@ from pipeline.preacher import Preacher
 import os
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-input_path = Path("dataset/example.pdf").resolve()
+input_path = Path("dataset/federated.pdf").resolve()
 output_dir = Path("output").resolve()
 llm_config_path=Path("config.yml").resolve()
 
