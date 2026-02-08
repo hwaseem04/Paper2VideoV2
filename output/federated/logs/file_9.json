@@ -1,0 +1,9 @@
+{
+    "scenario": "While promising, BlindFed's current iteration faces high communication and computational costs for the server due to FHE. Future work will focus on optimizing these overheads, strengthening model privacy guarantees, and analyzing robustness against malicious collaborators for practical, real-world adoption.",
+    "time_cost": "~10 seconds",
+    "audio_content": "BlindFed shows promise but faces high computational costs. Future research will optimize these overheads, enhance privacy guarantees, and analyze robustness for practical, real-world deployment.",
+    "style": "Talking Heads",
+    "source": "Section 6",
+    "prompt": "A professional researcher in their mid-30s, wearing a smart-casual shirt, standing in a clean, modern office or laboratory environment. They have a knowledgeable and forward-looking expression.",
+    " prompt": "A professional researcher in their mid-30s, wearing a smart-casual shirt, standing in a clean, modern office or laboratory environment. They have a knowledgeable and forward-looking expression."
+}

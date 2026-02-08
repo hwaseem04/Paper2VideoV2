@@ -1,0 +1,8 @@
+{
+    "scenario": "To further boost model privacy, BlindFed incorporates sample-level permutation and Stochastic Block Sampling (SBS). The server permutes encrypted intermediate representations and returns only a subset of block outputs, effectively mitigating potential model extraction attacks.",
+    "time_cost": "~9 seconds",
+    "audio_content": "BlindFed enhances privacy using sample-level permutation and stochastic block sampling, returning only a subset of outputs to thwart model extraction attacks.",
+    "style": "Slides",
+    "source": "Fig. 5",
+    "prompt": "A diagram illustrating the stochastic block sampling strategy, showing states 0 and 1 with transition probabilities of 0.5, used to mitigate similarity-based model extraction attacks."
+}
