@@ -4,6 +4,7 @@ from openai import AssistantEventHandler
 from textblob import TextBlob
 import re
 import json
+import ast
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -164,7 +165,7 @@ def extract_list_from_text(text):
         "TIME_ALLOCATION": "",
         }
         current_match = large_matches[i]
-        scene_match = re.search(rf'"SCENE{i+1}":\s*"([^"]+)"', current_match)
+        scene_match = re.search(r'"SCENE\d*":\s*"([^"]+)"', current_match)
         if scene_match:
             result_dict["SCENE"] = scene_match.group(1)
 
@@ -292,12 +293,23 @@ def _load_json_dict(raw: str) -> JSONType:
             )
             return json.loads(fixed_body, strict=False)
         except json.JSONDecodeError as e2:
-            #manually_fix_some bug
+            # 4. Try handling single quotes or unquoted literals (e.g. {'type': IMAGE})
             try:
-                # With special condition：origin "0" to origin \"0\"
-                manually_fixed = body.replace('"0"', r'\"0\"')
-                return json.loads(manually_fixed, strict=False)
+                # Replace single quotes with double quotes
+                # This is risky if string content has single quotes, but good for simple dicts
+                # First, ensure specific expected tokens like IMAGE/TABLE are quoted
+                fixed_body = re.sub(r':\s*(IMAGE|TABLE|image|table)\b', r': "\1"', body, flags=re.IGNORECASE)
+                # Convert 'key' to "key"
+                fixed_body = fixed_body.replace("'", '"')
+                return json.loads(fixed_body, strict=False)
             except json.JSONDecodeError as e3:
-                raise ValueError("Unable to parse any valid JSON object/array from input.") from e3
+                 # 5. Last resort: use ast.literal_eval with pre-fixing
+                try:
+                    # Fix unquoted IMAGE/TABLE just in case for ast.literal_eval
+                    fixed_body_ast = re.sub(r':\s*(IMAGE|TABLE|image|table)\b', r': "\1"', body, flags=re.IGNORECASE)
+                    return ast.literal_eval(fixed_body_ast)
+                except Exception as e4:
+                    print(f"JSON parsing failed: {e3}\nUnquoted/AST failed: {e4}\nRaw input: {raw}")
+                    return None
 
 
