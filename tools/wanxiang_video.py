@@ -1,13 +1,9 @@
 from pathlib import Path
-import requests
-from typing import Optional
-import time
-from dashscope import ImageSynthesis
 import yaml
-
-
-IMAGE_SYNTHESIS_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
-TASK_STATUS_URL = "https://dashscope.aliyuncs.com/api/v1/tasks/"
+from typing import Optional
+import dashscope
+from dashscope import VideoSynthesis
+from http import HTTPStatus
 
 class Wanxiang_video():
     """Parameters when called: img_path_lst, prompt, format_check."""
@@ -16,7 +12,6 @@ class Wanxiang_video():
                  config_path: Path = Path("config.yml"),
                  model: Optional[str] = None
                  ):
-        super().__init__(   )  # set attributes: cfg, logger, silent
         if config_path is not None:
             with open(config_path, "r") as f:
                 self.cfg: dict = yaml.safe_load(f)
@@ -24,76 +19,33 @@ class Wanxiang_video():
             self.cfg = None
         self.api_key = self.cfg["alibaba"]["API_KEY"]
         if model is None:
-            self.model = self.cfg["alibaba"]["T2I_MODEL"]
+            self.model = self.cfg["alibaba"]["T2V_MODEL"]
         else:
             self.model = model
         self.video_size = self.cfg["alibaba"]["IMAGE_SIZE"]
 
-        self.synthesizer = ImageSynthesis()
-
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "X-DashScope-Async": "enable"
-            }
-
-    def create_task(self, prompt: str, model: str = "wanx2.1-t2v-turbo", size: str = "1280*720", n: int = 1) -> Optional[str]:
-        payload = {
-            "model": model,
-            "input": {
-            "prompt": prompt
-            },
-            "parameters": {
-                "size": size,
-                "n": n
-            }
-        }
-        try:
-            response = requests.post(IMAGE_SYNTHESIS_URL, headers=self.headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data["output"]["task_id"]
-        except requests.exceptions.RequestException as e:
-            print(f"creating task failed: {e}")
-            return None
-
-    def check_task_status(self, task_id: str) -> Optional[str]:
-        status_url = f"{TASK_STATUS_URL}{task_id}"
-        try:
-            response = requests.get(status_url, headers=self.headers)
-            response.raise_for_status()
-            data = response.json()
-            if data["output"]["task_status"] == "SUCCEEDED":
-                return data["output"]["video_url"] 
-            elif data["output"]["task_status"]  == "FAILED":
-                print(f'task is failed: {data["output"]["task_status"] }')
-                return None
-            else:
-                print(f'task status: {data["output"]["task_status"] }')
-                return None
-        except requests.exceptions.RequestException as e:
-            print(f"checking status failed: {e}")
-            return None
+        # Set Base URL for International Usage
+        dashscope.base_http_api_url = "https://dashscope-intl.aliyuncs.com/api/v1"
+        dashscope.api_key = self.api_key
 
     def query(self, prompt: str):
-   
-        print("creating task...")
-        task_id = self.create_task(prompt)
-        if not task_id:
-            print("creating task failed, please check API key and internet")
-            return
-
-        print(f"task is created with ID: {task_id}")
-        print("checking task status...")
-
-        while True:
-            result_url = self.check_task_status(task_id)
-            if result_url:
-                print(f"task is completed with URL: {result_url}")
-                return result_url
-            time.sleep(5)
-
-
-
-
-    
+        print(f"Generating video with model {self.model}...")
+        try:
+            rsp = VideoSynthesis.call(
+                api_key=self.api_key,
+                model=self.model,
+                prompt=prompt,
+                size="1280*720",
+                n=1
+            )
+            
+            if rsp.status_code == HTTPStatus.OK:
+                video_url = rsp.output.video_url
+                print(f"Video generated successfully: {video_url}")
+                return video_url
+            else:
+                print(f"Video generation failed: {rsp.code}, {rsp.message}")
+                return None
+        except Exception as e:
+            print(f"Exception during video generation: {e}")
+            return None
