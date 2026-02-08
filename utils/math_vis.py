@@ -38,70 +38,19 @@ class Math_visual(Scene):
         self.animate()
 
     def animate(self):
-    # Title text explaining the two major classes of simulation methods
-        # title = Text("Two Major Classes of Simulation Methods", font_size=24).to_edge(UP)
+        # Define a simple circle
+        circle = Circle(radius=1, color="BLUE")
     
-    # Create two main boxes representing the two classes
-        left_box = Rectangle(width=3, height=4, color=BLUE).to_edge(LEFT, buff=1)
-        right_box = Rectangle(width=3, height=4, color=GREEN).to_edge(RIGHT, buff=1)
+        # Define a simple square
+        square = Square(side_length=2, color="RED")
+        square.shift(RIGHT * 2)
     
-    # Labels for each box
-        left_label = Text("Multipole summary", font_size=18).next_to(left_box, UP)
-        right_label = Text("External influence", font_size=18).next_to(right_box, UP)
-
-        self.play(
-            Create(left_box),
-            Create(right_box),
-            Write(left_label),
-            Write(right_label)
-        )
-        self.wait(2)
+        # Create animations
+        self.play(Create(circle))
+        self.play(Transform(circle, square))
+        self.play(Rotate(square, angle=PI/2))
+        self.play(FadeOut(square))
     
-    # Particle method visualization (left box)
-        particles = VGroup(*[Dot(radius=0.05, color=RED) for _ in range(20)])
-        particles.arrange_in_grid(4, 5, buff=0.2).move_to(left_box)
-        particle_arrows = VGroup(*[
-            Arrow(start=part.get_center(), end=part.get_center()+np.random.uniform(-0.3, 0.3, 3), 
-                color=YELLOW, buff=0, max_tip_length_to_length_ratio=0.2)
-            for part in particles
-        ])
-    
-        self.play(
-            FadeIn(particles),
-            LaggedStart(*[GrowArrow(arrow) for arrow in particle_arrows], lag_ratio=0.1)
-        )
-        self.wait(2)
-    
-    # Multipole method visualization (right box)
-        level1 = VGroup(*[Circle(radius=0.2, color=WHITE) for _ in range(4)])
-        level1.arrange_in_grid(2, 2, buff=0.5).move_to(right_box.get_center() + UP*0.5)
-    
-        level2 = Circle(radius=0.8, color=WHITE).move_to(right_box.get_center() + DOWN*0.5)
-    
-        merge_lines = VGroup(*[
-            Line(start=circle.get_bottom(), end=level2.get_top(), color=WHITE)
-            for circle in level1
-        ])
-    
-        self.play(
-            FadeIn(level1),
-            run_time=1.5
-        )
-        self.wait(1)
-    
-        self.play(
-            Create(merge_lines),
-            Create(level2),
-            run_time=2
-        )
-    
-    # Animation showing the two-stage process
-        stage1_text = Text("Left: Multipole Compression", font_size=16).next_to(ORIGIN + DOWN*1).shift(LEFT*1.8)
-        stage2_text = Text("Second: Far-field Influence", font_size=16).next_to(stage1_text, DOWN)
-    
-        self.play(Write(stage1_text))
-        self.wait(1.5)
-        self.play(Write(stage2_text))
         self.wait(3)
 
 
