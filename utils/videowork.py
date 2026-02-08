@@ -10,6 +10,8 @@ import io
 import subprocess
 from pathlib import Path
 from io import BytesIO
+import os
+from moviepy.video.io.ffmpeg_writer import ffmpeg_write_video
 
 def add_silence(audio, target_duration):
     """Pad silence at the end of the audio so that its total length matches the target duration"""
@@ -55,7 +57,16 @@ def extract_key_frames(video_path):
 
 def save_video(video_path, video ):
     clip = VideoFileClip(video)
-    clip.write_videofile(video_path, codec="libx264", fps=clip.fps)
+    
+    fps = clip.fps if clip.fps else 24.0
+    audiofile = None
+    if clip.audio:
+        audiofile = str(video_path) + "_temp_audio.m4a"
+        clip.audio.write_audiofile(audiofile, fps=44100, codec="aac", verbose=False, logger=None)
+        
+    ffmpeg_write_video(clip, video_path, fps, codec="libx264", audiofile=audiofile)
+    if audiofile and os.path.exists(audiofile):
+        os.remove(audiofile)
 
 def convert_frame_to_base64(frame):
     image = Image.fromarray(np.uint8(frame))  
@@ -113,8 +124,28 @@ def merge_video_audio(video_path, audio_path, text, path):
         audio = add_silence(audio, video.duration)
 
     final = video.set_audio(audio)
-    final.write_videofile(path, codec='libx264')
+    
+    # Imports now global
+
+
+    output_fps = video.fps
+    if output_fps is None:
+        print("Warning: video.fps is None, defaulting to 24 fps.")
+        output_fps = 24.0
+    output_fps = float(output_fps)
+    
+    print(f"DEBUG: Manual ffmpeg write with fps={output_fps}")
+    
+    # Manual audio writing
+    audiofile = str(path) + "_temp_audio.m4a"
+    final.audio.write_audiofile(audiofile, fps=44100, codec="aac", verbose=False, logger=None)
+    
+    # Manual video writing
+    ffmpeg_write_video(final, str(path), output_fps, codec='libx264', audiofile=audiofile)
     final.close()
+    
+    if os.path.exists(audiofile):
+        os.remove(audiofile)
 
 def image_to_video(image_path, audio_path, video_duration, output_path):
     """
@@ -153,7 +184,8 @@ def image_to_video(image_path, audio_path, video_duration, output_path):
 
     # save temp document
     temp_video_path = "temp_video.mp4"
-    video.write_videofile(temp_video_path, fps=24)  # 可以根据需要调整帧率
+    # Manual write to bypass decorator bugs
+    ffmpeg_write_video(video, temp_video_path, 24.0, codec='libx264', audiofile=None)
 
     # use merge_video_audio to adjust time duration
     merge_video_audio(temp_video_path, audio_path, video_duration, output_path)
@@ -180,8 +212,18 @@ def concatenate_videos(video_list, output_path):
     # 按顺序拼接视频剪辑
     final_clip = concatenate_videoclips(clips, method="compose")
 
-    # 保存拼接后的视频
-    final_clip.write_videofile(output_path, codec="libx264", fps=24)
+    # save concatenated video
+    # Manual write to bypass decorator bugs
+    fps = 24.0
+    audiofile = None
+    if final_clip.audio:
+        audiofile = str(output_path) + "_temp_audio.m4a"
+        final_clip.audio.write_audiofile(audiofile, fps=44100, codec="aac", verbose=False, logger=None)
+        
+    ffmpeg_write_video(final_clip, str(output_path), fps, codec="libx264", audiofile=audiofile)
+    
+    if audiofile and os.path.exists(audiofile):
+        os.remove(audiofile)
 
     # 关闭所有视频剪辑
     for clip in clips:
