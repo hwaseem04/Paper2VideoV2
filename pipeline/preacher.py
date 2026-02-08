@@ -13,7 +13,7 @@ from utils.slides import create_ppt_style_image, get_specific_element
 from utils.logger import get_logger
 from utils.custom_types import *
 from utils.textwork import merge_dict_keys_values, classify_response, text_to_list, extract_code,replace_animate,extract_dict,extract_list_from_text, _load_json_dict
-from utils.videowork import extract_key_frames, merge_video_audio, image_to_images, image_to_video, concatenate_videos
+from utils                                                                                                                                                .videowork import extract_key_frames, merge_video_audio, image_to_images, image_to_video, concatenate_videos
 from utils.math_vis import render_video
 from moviepy.editor import VideoFileClip
 from tools import Wanxiang_video, Wanxiang_image, TavusClient, Qwentts
@@ -236,7 +236,23 @@ class Preacher:
             self.general_video_tool = Wanxiang_video(config_path=llm_config_path)
         if self.captioning_tool == "wanx":
             self.captioning_tool = Wanxiang_image(config_path=llm_config_path)
-        self.talking_head_tool = TavusClient(config_path=llm_config_path)
+            
+        # Conditionally initialize Tavus
+        self.talking_head_tool = None
+        try:
+             # Check if key exists and is not empty before init
+            with open(llm_config_path, "r") as f:
+                import yaml
+                cfg = yaml.safe_load(f)
+                tavus_key = cfg.get("Tavus", {}).get("API_KEY", "")
+            
+            if tavus_key:
+                self.talking_head_tool = TavusClient(config_path=llm_config_path)
+            else:
+                self.workflow_logger.warning("Tavus API key missing. Talking Head generation disabled.")
+        except Exception as e:
+            self.workflow_logger.warning(f"Failed to initialize Tavus: {e}. Talking Head generation disabled.")
+
         # example
         if self.with_example:
             assert (
@@ -357,13 +373,18 @@ class Preacher:
     
     def low_planning(self, part_plan):
         plan_file = self.log_dir/f"file_{self.scene_idx}.json"
-        self.final_plan[self.scene_idx]['scenario'] = part_plan['SCENE']
-        self.final_plan[self.scene_idx]['time_cost'] = part_plan['TIME_ALLOCATION']
+        # Check if plan file already exists - if so, load and skip planning
         if os.path.exists(plan_file):
             with open(plan_file, "r") as file:
                 self.final_plan[self.scene_idx] = json.load(file)
                 return None
-        elif self.with_reflection:
+        
+        # Set scenario and time_cost from high-level plan
+        self.final_plan[self.scene_idx]['scenario'] = part_plan['SCENE']
+        self.final_plan[self.scene_idx]['time_cost'] = part_plan['TIME_ALLOCATION']
+        
+        # Generate low-level plan details
+        if self.with_reflection:
             iter=0
             eval_results=None
             low_plan=None
@@ -377,11 +398,15 @@ class Preacher:
         else:
             low_plan = self.low_plan_by_llm()
             low_plan_legal = self.setting_plan_format(low_plan)
-            self.final_plan[self.scene_idx] = extract_dict(low_plan_legal)
+            # Update only non-empty fields to preserve scenario and time_cost
+            extracted = extract_dict(low_plan_legal)
+            for key, value in extracted.items():
+                if value:  # Only update if not empty string
+                    self.final_plan[self.scene_idx][key] = value
         
-
+        # Save the complete plan (with scenario and time_cost) to file
         with open(plan_file, "w") as file:
-            json.dump(self.final_plan[self.scene_idx], file)
+            json.dump(self.final_plan[self.scene_idx], file, indent=4)
     
     def low_plan_by_llm(self, part_plan, eval_results, low_plan_legal) -> str:
         if eval_results:
@@ -435,7 +460,14 @@ class Preacher:
         elif "slides" in style.lower():
             video_path=self.slides_work(scene_idx)
         elif "heads" in style.lower() :
-            video_path=self.talking_head_work(scene_idx)
+             if self.talking_head_tool is None:
+                self.workflow_logger.warning("Talking head tool is disabled. Falling back to general video.")
+                print("Talking head tool is disabled. Falling back to general video.")
+                # Update style to avoid evaluation errors
+                self.final_plan[scene_idx]["style"] = "General Video"
+                video_path = self.general_work(scene_idx)
+             else:
+                video_path = self.talking_head_work(scene_idx)
         else: print("error: Please check the style file")
         return video_path
 
@@ -595,7 +627,7 @@ class Preacher:
     
     def captioning_single_work(self, plan, eval_results=None):
         if eval_results==None:
-            prompt_r = " Please use {} and {} as the materials to depict a image scene that a diffusion model can understand and generate. Return the prompt ONLY".format(plan["scenario"], plan["prompt"])
+            prompt_r = " Please use {} and {} as the materials to depict a image scene that a diffusion model can understand and generate. Return the prompt ONLY".format(plan.get("scenario", ""), plan["prompt"])
             plan["prompt"] = eval(
             self.art_agent(
                     prompt=prompt_r+ "\n" + plan["prompt"],
@@ -634,7 +666,7 @@ class Preacher:
             time = plan["time_cost"]
         else:
             time = '8'
-        image_to_video(image_path, self.curr_audio_path, time, self.final_video_path)
+        image_to_video(self.curr_image_path, self.curr_audio_path, time, self.final_video_path)
         return self.final_video_path
 
     def talking_head_single_work(self, audio_url, final_video_path):
@@ -743,8 +775,12 @@ class Preacher:
             )
         )
         #self.workflow_logger.info(f"low_plan_legal: {low_plan_legal}")
-        if _load_json_dict(plan_legal) and step=='low':
-            self.final_plan[self.scene_idx] = _load_json_dict(plan_legal)
+        parsed_plan = _load_json_dict(plan_legal)
+        if parsed_plan and step=='low':
+            # Update only non-empty fields to preserve scenario and time_cost
+            for key, value in parsed_plan.items():
+                if value:  # Only update if not empty string
+                    self.final_plan[self.scene_idx][key] = value
         return  plan_legal
 
     def _prepare_dir(self, input_path, output_dir) -> None:
