@@ -542,7 +542,7 @@ class Preacher:
                     video_success, eval_results = self.video_evaluate_by_mllm(plan, video_path, type='video')
                     iter += 1
                 video = VideoFileClip(video_path)
-                video.write_videofile(self.curr_video_path)
+                video.write_videofile(str(self.curr_video_path))
         elif "mol" in style_.lower():
             if os.path.exists(self.curr_video_path):
                 pass
