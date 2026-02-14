@@ -2,7 +2,41 @@ system_message = "You are an expert in reading academic papers and creating vide
 
 math_prompt = "You are an expert in reading academic papers and creating video summaries based on them. "
 
-high_level_planning_prompt = "Given a paper, please design around 10 concise scene descriptions that summarize its key contributions with strong logic relation. Requirements: Each scene include strong relationship between last and next scene. No overlapping content between scenes. Collectively present all key findings in a coherent narrative. Maintain high technical accuracy and professionalism. Allow 5 to 10 seconds of video per scene. Deliver only core content; omit acknowledgements and references.\n\nYou MUST output the scenes in the following JSON format:\n```json\n[\n  {\"SCENE1\": \"Scene description\", \"DESCRIPTION\": \"Brief title\", \"TIME_ALLOCATION\": \"~X seconds\"},\n  {\"SCENE2\": \"Scene description\", \"DESCRIPTION\": \"Brief title\", \"TIME_ALLOCATION\": \"~X seconds\"},\n  ...\n]\n```\nDo NOT just acknowledge this request. Generate the actual scene list NOW."
+high_level_planning_prompt = """Given a paper, please design a video summary. 
+The number of scenes should be based on the RECOMMENDATION in the style context below.
+
+{style_context}
+
+Requirements: 
+1. Each scene must include strong relationship between last and next scene.
+2. No overlapping content between scenes.
+3. Collectively present all key findings in a coherent narrative.
+4. Maintain high technical accuracy and professionalism.
+5. Allow 5 to 10 seconds of video per scene.
+6. Deliver only core content; omit acknowledgements and references.
+
+You MUST output the scenes in the following STRICT JSON format (list of objects):
+```json
+[
+  {{
+    "scene_id": 1,
+    "title": "Brief title",
+    "summary": "Scene description and content summary.",
+    "paper_section": "Introduction/Method/etc",
+    "narrative_role": "problem/solution/result/etc",
+    "time_allocation_sec": 5,
+    "target_layout": "two_col_fig_left/full_fig_with_callouts/etc",
+    "text_density": "low/medium/high",
+    "visual_density": "medium/high",
+    "uses_builds": true,
+    "expected_build_steps": 2,
+    "primary_sources": ["Figure 1", "Section 1"],
+    "reference_style_examples": []
+  }},
+  ...
+]
+```
+Do NOT just acknowledge this request. Generate the actual scene list NOW. Ensure strictly valid JSON."""
 
 high_level_evaluate_prompt = "Below are the video-summary scenes I designed based on the corresponding paper. Please check it with answering questions: Do these scenes cover all the key points the original paper intends to convey? Do these scenes avoid overlapping content and redundancy? Do these scenes form a coherent and correct story? Please answer “YES/NO.” If you answer “NO” (i.e., issues exist), provide suggestions for improvement. Current plan:"
 
@@ -10,107 +44,76 @@ high_level_replanning_prompt = "The above are the scenes you previously designed
 
 high_plan_format_prompt = " The next paragraph of TEXT will provide descriptions for multiple scenes. I need you to fill the \"***\" section of the dict LIST with the TEXT. Please output the LIST only. LIST:[{ \"SCENE1\": \"******\", \"DESCRIPTION\": \"******\", \"TIME_ALLOCATION\": \"******\"},{ \"SCENE2\": \"******\", \"DESCRIPTION\": \"******\", \"TIME_ALLOCATION\": \"******\"}...] TEXT:"
 
-low_level_planning_prompt = {
-  "task": "Your task is to select an appropriate presentation style for the scenario (strictly choosing one style from Slides, Professional, Talking Heads, Captioning, or General Video styles) of the scene I give you at last.",
-  "considerations": "Please consider the dynamics, themes, and content of the original text comprehensively.",
-  "assistance": "To assist you, I have designed the following questions.",
-  "instructions": [
-    {
-      "Question 1": "Can this scenario be described using one or two important image/table from the original paper?",
-      "yes": {
-        "action": "Confirm the video style as Slides style.",
-        "next_step": "Proceed to Act1."
-      },
-      "no": {
-        "next_step": "Go to Question 2."
-      }
-    },
-    {
-      "Question 2": "If the scenario includes professional contents like MOL structure presentation or involves the presentation of mathematical principles?",
-      "yes": {
-        "action": "Confirm the video style as Professional style.",
-        "next_step": "Proceed to Act2."
-      },
-      "no": {
-        "next_step": "Go to Question 3."
-      }
-    },
-    {
-      "Question 3": "Is the content of this scene suitable to be presented as a speech by an appropriate character in front of the camera?",
-      "yes": {
-        "action": "Confirm the video style as Talking Heads style.",
-        "next_step": "Proceed to Act3."
-      },
-      "no": {
-        "next_step": "Go to Question 4."
-      }
-    },
-    {
-      "Question 4": "Is the scene directly represented by existing real photos?",
-      "yes": {
-        "next_step": "Proceed to Act4."
-      },
-      "no": {
-        "next_step": "Proceed to Act5."
-      }
-    }
-  ],
-  "actions": {
-    "Act1": {
-      "requirement": "Provide the SPECIFIC position of the important picture/table in the paper so I can find it easily.",
-      "content": [
-        "Provide 'Prompt' and 'Audio Content' to describe it.",
-        "Ensure it does not exceed the allocated time.",
-        "Complete the answering table."
-      ]
-    },
-    "Act2": {
-      "requirement": "Is the professional content of this video related to molecular visualization or mathematical formulas?",
-      "content": [
-        "Provide related content.",
-        "Provide 'Prompt' and 'Audio Content' to describe it.",
-        "Ensure it does not exceed the allocated time."
-      ]
-    },
-    "Act3": {
-      "requirement": "Describe this person's appearance and identity so I can retrieve the proper person.",
-      "content": [
-        "What does he/she say?",
-        "Provide the 'Audio Content'.",
-        "Ensure it does not exceed the allocated time."
-      ]
-    },
-    "Act4": {
-      "requirement": "Does the depicted scene include any dynamic elements, making it better suited for video description rather than static photos?",
-      "yes": {
-        "action": "Confirm the video style as General Video style.",
-        "requirement": "Provide a textual description that can be used to retrieve photos and Prompt for AI-generated videos."
-      },
-      "no": {
-        "action": "Confirm the video style as Captioning style.",
-        "requirement": "Only provide a textual description for retrieving photos."
-      },
-      "additional": "In any case, you must provide narration describing the scene, ensuring it does not exceed the allocated time."
-    },
-    "Act5": {
-      "requirement": "Does the depicted scene include any dynamic elements, making it better suited for video description rather than static images?",
-      "yes": {
-        "action": "Confirm the video style as General Video style.",
-        "requirement": "Provide a textual description that can be used to retrieve photos and prompts for AI-generated videos."
-      },
-      "no": {
-        "action": "Confirm the video style as Captioning style.",
-        "requirement": "Only provide a textual description for retrieving photos."
-      },
-      "additional": "In any case, you must provide narration describing the scene, ensuring it does not exceed the allocated time."
-    }
-  },
-  "notice": [
-    "If you choose SLIDES style, you must provide the corresponding material position (Like Fig1, or Table2), not textual content!",
-    "Besides, design audio content that can be spoken for humans to describe the scene, \" TIME_ALLOCATION \" is already given, donot change!."
-  ],
-  "Scene":"Here is the Scene provided to you:"
-}
+low_level_planning_prompt = """
+Your task is to generate a detailed low-level plan for a single video scene based on the high-level description provided below.
+
+Input Scene:
+{scene_json}
+
+Style Advice:
+{style_advice}
+
+You must design the best presentation layout and animation plan for this specific scene.
+Do NOT default to a generic template. Analyze the content and the Style Advice below to make a decision.
+
+Step 1: Analyze Content & Reference
+- What is the core information? (A complex diagram? A list of contributions? A set of numerical results?)
+- Look at the [Style Advice] provided. Does it suggest a specific layout for this content type?
+- Decide on the `target_layout` that best visualizes this specific content.
+
+Step 2: Design the Slide & Builds
+- How should the information appear? 
+- `builds` are CRITICAL. Determine how to break the content into 2-4 reveals.
+- Example: If explaining a diagram, reveal the input -> then the encoder -> then the output.
+- Example: If listing contributions, show them one by one.
+- Define specific visual emphasis (e.g., highlighting a bounding box on a figure).
+
+Step 3: Generate JSON
+Output the plan strictly following the JSON schema.
+- `style`: Generally "Slides" (unless a specific "Professional" visualization is required).
+- `layout`: Define the geometry of regions based on your design.
+
+```json
+{{
+  "scene_id": 1,
+  "scenario": "Detailed visual description...",
+  "time_cost_sec": 7,
+  "audio_content": "Verbal narration script...",
+  "style": "Slides", 
+  "source": ["Figure 1"],
+  "layout": {{
+    "template": "two_col_fig_left",
+    "background_color": "#FFFFFF",
+    "regions": {{
+      "title":   {{"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.10}},
+      "figure":  {{"x": 0.05, "y": 0.20, "w": 0.45, "h": 0.70}},
+      "bullets": {{"x": 0.55, "y": 0.20, "w": 0.40, "h": 0.70}}
+    }}
+  }},
+  "elements": {{
+    "title": "Scene Title",
+    "figure": {{"type": "paper_figure", "ref": "Figure 1"}},
+    "bullets": ["Point 1", "Point 2"]
+  }},
+  "builds": [
+    {{
+      "step_index": 0,
+      "time_offset_sec": 0.0,
+      "actions": [{{"type": "show", "target": "title"}}],
+      "audio_segment": "Corresponding narration...",
+      "visual_emphasis": []
+    }},
+    {{
+      "step_index": 1,
+      "time_offset_sec": 2.0,
+      "actions": [{{"type": "fade_in", "target": "bullets[0]"}}],
+      "audio_segment": "Next sentence...",
+      "visual_emphasis": []
+    }}
+  ]
+}}
+```
+"""
 
 
 low_level_evaluate_prompt = "This is the video summary plan we created for the scene of the part of the paper. Please respond to each of the following questions with either \"YES\" or \"NO\" to determine whether the current plan meets the requirements (if \"NO\", provide the correct answer)."

@@ -7,6 +7,7 @@ import random
 from typing import Optional
 import re
 import os 
+import fitz # PyMuPDF
 from llms import GPT4, DepictQA, GPT4_AZ, GEMINI,QWEN
 from . import prompts
 from utils.slides import create_ppt_style_image, get_specific_element
@@ -19,6 +20,9 @@ from moviepy.editor import VideoFileClip
 from tools import Wanxiang_video, Wanxiang_image, TavusClient, Qwentts
 from utils.misc import download_file, name_to_pdb_ids, download_pdb
 from utils.mol import generate_mol_animation
+from tools.retriever import PaperRetriever
+import random
+import json
 
 class Preacher:
     """
@@ -253,6 +257,25 @@ class Preacher:
         except Exception as e:
             self.workflow_logger.warning(f"Failed to initialize Tavus: {e}. Talking Head generation disabled.")
 
+        # Retriever & Style DB
+        try:
+            # Use the index created by tests/test_retriever.py for now
+            index_path = Path("output/test_index") 
+            self.retriever = PaperRetriever(index_path=index_path)
+            
+            self.style_db = {}
+            style_db_path = Path("data_reference/style_db/db_summary.json")
+            if style_db_path.exists():
+                with open(style_db_path, "r") as f:
+                    summary = json.load(f)
+                    for item in summary:
+                        self.style_db[item["video_id"]] = item["path"]
+            else:
+                self.workflow_logger.warning("Style DB not found. Retrieval will be limited.")
+        except Exception as e:
+            self.workflow_logger.warning(f"Failed to init retrieval: {e}")
+
+
         # example
         if self.with_example:
             assert (
@@ -264,6 +287,110 @@ class Preacher:
             self.low_example = examples["low_examples"]
             self.manim_example = examples["MANIM_examples"]
         random.seed(0)
+
+    def retrieve_global_style(self) -> str:
+        """
+        Retrieve context for high-level planning.
+        """
+        context = []
+        try:
+            # 1. Retrieve similar papers
+            similar_papers = self.retriever.retrieve_similar_papers(pdf_path=self.pdf_path, k=3)
+            self.workflow_logger.info(f"Retrieved {len(similar_papers)} papers. Type of first: {type(similar_papers[0]) if similar_papers else 'None'}")
+            
+            context.append("## Similar Papers found in specific domain:")
+            for p in similar_papers:
+                if isinstance(p, dict):
+                    context.append(f"- {p.get('title', 'Unknown')}")
+                else:
+                    self.workflow_logger.warning(f"Unexpected item type in retrieval: {type(p)}")
+                    context.append(f"- {str(p)}")
+                
+            # 2. Retrieve style examples (placeholder logic for now)
+            # Find if we have video style for any of these
+            style_matches = []
+            for p in similar_papers:
+                # heuristic: check if stem matches
+                pdf_stem = Path(p['path']).stem
+                # Check fuzzy or exact match in style_db keys
+                for vid_id in self.style_db.keys():
+                    if pdf_stem in vid_id or vid_id in pdf_stem:
+                         style_matches.append(vid_id)
+            
+            # If no direct match, take random available styles as examples
+            if not style_matches and self.style_db:
+                # Fallback: use random styles if no specific matches found
+                style_matches = random.sample(list(self.style_db.keys()), min(3, len(self.style_db)))
+            
+            total_slides = 0
+            if style_matches:
+                context.append("\n## Reference Presentation Styles (from existing videos):")
+                for vid_id in style_matches:
+                    path = self.style_db[vid_id]
+                    meta_path = Path(path) / "metadata.json"
+                    if meta_path.exists():
+                        with open(meta_path, "r") as f:
+                            meta = json.load(f)
+                            slides_cnt = len(meta.get("slides", []))
+                            total_slides += slides_cnt
+                            avg_builds = sum(len(s.get("builds", [])) for s in meta.get("slides", [])) / max(1, slides_cnt)
+                            context.append(f"- Video '{vid_id}': approx {slides_cnt} slides, {avg_builds:.1f} builds/slide.")
+                
+                if len(style_matches) > 0:
+                    avg_scenes = int(total_slides / len(style_matches))
+                    
+                    # Adjust based on PDF content length (heuristic)
+                    try:
+                        doc = fitz.open(self.pdf_path)
+                        text_len = sum(len(p.get_text()) for p in doc)
+                        page_count = len(doc)
+                        
+                        # Heuristic: ~2 scenes per page of dense text, or 1 scene per 1000 chars?
+                        # Let's say baseline is 1 scene per 1.5 pages
+                        content_estimated_scenes = max(5, int(page_count / 1.5))
+                        
+                        # Weighted average: 70% content, 30% style reference
+                        final_scenes = int(0.7 * content_estimated_scenes + 0.3 * avg_scenes)
+                        context.append(f"\nRECOMMENDATION: Target approximately {final_scenes} scenes (Calculated from {page_count} pages of content and reference styles).")
+                    except Exception as e:
+                         self.workflow_logger.warning(f"Failed to analyze PDF content for planning: {e}")
+                         context.append(f"\nRECOMMENDATION: Target approximately {avg_scenes} scenes (Based on reference styles).")
+
+        except Exception as e:
+            self.workflow_logger.warning(f"Global retrieval failed: {e}")
+            
+        return "\n".join(context)
+
+    def retrieve_scene_style(self, scene_plan: dict) -> str:
+        """
+        Retrieve context for low-level planning (scene specific).
+        Dynamically selects a reference style/layout based on scene content keywords.
+        """
+        scene_desc = f"{scene_plan.get('SCENE', '')} {scene_plan.get('DESCRIPTION', '')} {scene_plan.get('summary', '')}".lower()
+        
+        advice = []
+        
+        # 1. Content Analysis -> Layout Suggestion
+        if any(w in scene_desc for w in ['result', 'performance', 'accuracy', 'table', 'chart', 'graph']):
+             advice.append("Detected 'Results' content: Consider a 'full_fig_with_callouts' or 'two_row_charts' layout. Use builds to highlight specific data points or rows in the table.")
+        elif any(w in scene_desc for w in ['method', 'architecture', 'model', 'diagram', 'pipeline']):
+             advice.append("Detected 'Methodology' content: Consider a 'full_fig_with_callouts' layout to show the pipeline. Use builds to trace the data flow through the model.")
+        elif any(w in scene_desc for w in ['intro', 'motivation', 'problem', 'challenge']):
+             advice.append("Detected 'Motivation' content: Consider a 'two_col_fig_right' layout. Use bullet points on the left to state the problem, with an illustrative figure on the right.")
+        elif any(w in scene_desc for w in ['code', 'algorithm', 'pseudocode']):
+             advice.append("Detected 'Algorithm' content: Use a 'code_snippet' layout. Use builds to highlight lines of code as they are explained.")
+        else:
+             advice.append("General Content: Default to 'two_col_bullets_left' if a figure is available, otherwise 'one_col_bullets'.")
+
+        # 2. Retrieve Reference Layout (from similar papers/videos if available)
+        # Placeholder: If we had a granular slide DB, we would query it here.
+        # For now, we inject general "Best Practices" for scientific videography.
+        advice.append("\nReference Best Practices:")
+        advice.append("- Avoid wall-of-text. Max 3-4 bullets per slide.")
+        advice.append("- Sync visual appearance with audio keywords.")
+        advice.append("- Keep it simple. One key idea per slide.")
+        
+        return "\n".join(advice)
 
     def _set_constants(self) -> None:
         self.degra_subtask_dict: dict[Degradation, Subtask] = {
@@ -297,26 +424,33 @@ class Preacher:
                 self.high_plan = file.read() 
         else:
             self.high_plan=self.high_planning()
-        self.high_plan_list = extract_list_from_text(self.high_plan)
-        # if self.plan_by=='GEMINI':
-        #     self.high_plan_list = filter_gemini_content(self.high_plan_list)
+        
+        # Parse high level plan (list of objects)
+        self.high_plan_list = _load_json_dict(self.high_plan)
+        if not isinstance(self.high_plan_list, list):
+             self.workflow_logger.error(f"High plan validation failed: Expected list, got {type(self.high_plan_list)}")
+             # Verify if it is wrapped in a dict
+             if isinstance(self.high_plan_list, dict):
+                 # Try to find a list value
+                 for v in self.high_plan_list.values():
+                     if isinstance(v, list):
+                         self.high_plan_list = v
+                         break
+        
         self.final_plan=[]
-        for i in range(len(self.high_plan_list)):#len(self.high_plan_list)
-            self.final_plan.append({"scenario": "",
-                                    "time_cost": "",
-                                    "audio_content": "",
-                                    "style": "",
-                                    "source": "",
-                                    "prompt": ""
-                                    })
+        for i in range(len(self.high_plan_list)):
+            self.final_plan.append({}) # Initialize empty, will filter later
             self.scene_idx = i
-            self.low_planning(self.high_plan_list[i])#self.high_plan_list[i]
+            self.low_planning(self.high_plan_list[i])
+        
         self.video_list = []
-        for i in range(len(self.high_plan_list)):#len(self.high_plan_list)
+        for i in range(len(self.high_plan_list)):
             self.scene_idx = i
-            self.generate_(i)
-            self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))#self.generate_(i)) 
-        concatenate_videos(self.video_list, self.final_video_path_)
+            # Skip video generation for now if formats are incompatible or just placeholder
+            # self.generate_(i) 
+            # self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))
+            pass
+        # concatenate_videos(self.video_list, self.final_video_path_)
 
     def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
@@ -345,10 +479,22 @@ class Preacher:
         return high_plan_legal
     
     def high_plan_by_llm(self,eval_results, high_plan) -> str:
+        # Retrieve style context
+        style_context = self.retrieve_global_style()
+        
         if eval_results:
             prompt = high_plan + ' \n '+ prompts.high_level_replanning_prompt + eval_results
         else:
-            prompt = prompts.high_level_planning_prompt
+            # Inject style context into the placeholder
+            # Note: prompts.high_level_planning_prompt has {style_context} placeholder now
+            try:
+                base_prompt = prompts.high_level_planning_prompt.format(style_context=style_context)
+            except Exception as e:
+                 # Fallback if format fails (e.g. if prompt doesn't have placeholder or has other braces)
+                 self.workflow_logger.warning(f"Formatting failed: {e}")
+                 base_prompt = prompts.high_level_planning_prompt + "\n\n" + style_context
+
+            prompt = base_prompt
             if self.with_example :
                 prompt += ' \n '+ merge_dict_keys_values(self.high_example) 
         high_plan = eval(
@@ -379,72 +525,58 @@ class Preacher:
                 self.final_plan[self.scene_idx] = json.load(file)
                 return None
         
-        # Set scenario and time_cost from high-level plan
-        self.final_plan[self.scene_idx]['scenario'] = part_plan['SCENE']
-        self.final_plan[self.scene_idx]['time_cost'] = part_plan['TIME_ALLOCATION']
+        # Initialize with high-level info
+        # Map new schema keys if necessary or just copy
+        self.final_plan[self.scene_idx] = part_plan.copy()
         
         # Generate low-level plan details
-        if self.with_reflection:
-            iter=0
-            eval_results=None
-            low_plan=None
-            low_plan_legal=None
-            plan_idx=2
-            while plan_idx < 6 and iter < self.max_low_plan_iteration:
-                low_plan = self.low_plan_by_llm(part_plan, eval_results, low_plan_legal)
-                low_plan_legal = self.setting_plan_format(low_plan)
-                plan_idx, eval_results = self.low_evaluate_by_llm(plan_idx, low_plan_legal)
-                iter += 1
-        else:
-            low_plan = self.low_plan_by_llm()
-            low_plan_legal = self.setting_plan_format(low_plan)
-            # Update only non-empty fields to preserve scenario and time_cost
-            extracted = extract_dict(low_plan_legal)
-            for key, value in extracted.items():
-                if value:  # Only update if not empty string
-                    self.final_plan[self.scene_idx][key] = value
+        # We simplify to single-shot generation + validation for now
+        # ignoring the complex multi-step reflection loop which was tied to the old schema
         
-        # Save the complete plan (with scenario and time_cost) to file
+        eval_results = None
+        low_plan = None
+        
+        # formatting handled inside low_plan_by_llm
+        low_plan_str = self.low_plan_by_llm(part_plan, eval_results)
+        
+        # Parse result
+        parsed_low_plan = _load_json_dict(low_plan_str)
+        
+        if parsed_low_plan and isinstance(parsed_low_plan, dict):
+             # Merge into final plan
+             self.final_plan[self.scene_idx].update(parsed_low_plan)
+        else:
+             self.workflow_logger.error(f"Failed to parse low plan for scene {self.scene_idx}")
+        
+        # Save the complete plan
         with open(plan_file, "w") as file:
             json.dump(self.final_plan[self.scene_idx], file, indent=4)
     
-    def low_plan_by_llm(self, part_plan, eval_results, low_plan_legal) -> str:
-        if eval_results:
-            prompt = low_plan_legal + ' \n '+ prompts.low_level_replanning_prompt + eval_results
-        else:
-            prompt = merge_dict_keys_values(prompts.low_level_planning_prompt) + merge_dict_keys_values(part_plan)
-            if self.with_example :
-                prompt += 'Here are some examples, not the scene I want to ask you:'+ ' \n '+ merge_dict_keys_values(self.low_example) 
+    def low_plan_by_llm(self, part_plan, eval_results=None, low_plan_legal=None) -> str:
+        # Retrieve scene-specific style advice
+        style_advice = self.retrieve_scene_style(part_plan)
+        
+        try:
+             prompt = prompts.low_level_planning_prompt.format(
+                 scene_json=json.dumps(part_plan, indent=2), 
+                 style_advice=style_advice
+             )
+        except Exception as e:
+             self.workflow_logger.warning(f"Prompt formatting failed: {e}")
+             prompt = prompts.low_level_planning_prompt + "\nInput: " + str(part_plan)
+
+        if self.with_example :
+             # self.low_example is usually a dict, might need adjustment if using new schema
+             # For now, append it if it's a string or convertible
+             pass 
+             
         low_plan = eval(
             self.planner(
                 prompt=prompt,
                 pdf_path=Path(self.pdf_path),
             )
         )
-        #self.workflow_logger.info(f"low_plan: {low_plan}")
         return  low_plan
-    
-    def low_evaluate_by_llm(self, plan_idx, low_plan_legal):
-        while plan_idx < 6:
-            current_sec = self.low_plan_order[plan_idx-2]
-            pattern = rf'"{current_sec}":\s*(?:"([^"]*)"|(\{{.*?\}})|(\[.*?\]))'
-            match = re.search(pattern, low_plan_legal, re.DOTALL)
-            if match:
-                self.final_plan[self.scene_idx][current_sec] = match.group(1) if match.group(1) else match.group(2) if match.group(2) else match.group(3)       
-
-            prompt = prompts.low_level_evaluate_prompt +  prompts.low_level_evaluate_prompt_list[plan_idx-2] + str(self.final_plan[self.scene_idx])
-            eval_results = eval(
-                self.evaluator(
-                    prompt = prompt,
-                    pdf_path=Path(self.pdf_path),
-                    ))
-            success = classify_response(eval_results)
-            self.workflow_logger.info(f"Eval_Results: {eval_results}")
-            if not success:
-                return plan_idx, eval_results
-            if success: 
-                plan_idx += 1
-        return plan_idx, eval_results
     
     def generate_(self, scene_idx):
         self.curr_scene_dir = self.work_dir / "scene_{}".format(scene_idx)
@@ -767,24 +899,10 @@ class Preacher:
         return success, eval_results
     
     def setting_plan_format(self, plan, step="low"):
-        if step == "high":
-            prompt = prompts.high_plan_format_prompt + ' \n '+ plan  
-        else:
-            prompt = plan + ' \n '+ prompts.low_plan_format_prompt
-        plan_legal = eval(
-            self.planner(
-                prompt=prompt,
-                pdf_path=Path(self.pdf_path),
-            )
-        )
-        #self.workflow_logger.info(f"low_plan_legal: {low_plan_legal}")
-        parsed_plan = _load_json_dict(plan_legal)
-        if parsed_plan and step=='low':
-            # Update only non-empty fields to preserve scenario and time_cost
-            for key, value in parsed_plan.items():
-                if value:  # Only update if not empty string
-                    self.final_plan[self.scene_idx][key] = value
-        return  plan_legal
+        # Deprecated: Now we rely on strict JSON prompting
+        # But high_planning still uses logic that expects a string return
+        return plan
+
 
     def _prepare_dir(self, input_path, output_dir) -> None:
 
