@@ -315,10 +315,10 @@ class Preacher:
         for i in range(len(self.high_plan_list)):#len(self.high_plan_list)
             self.scene_idx = i
             self.generate_(i)
-            self.video_list.append(self.work_dir /f"scene_{self.scene_idx}"/"scene{}.mp4".format(self.scene_idx))#self.generate_(i)) 
+            self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))#self.generate_(i)) 
         concatenate_videos(self.video_list, self.final_video_path_)
 
-    def high_planning(self) -> None:
+    def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
         if os.path.exists(self.high_plan_path):
             with open(self.high_plan_path, "r") as file:
@@ -509,11 +509,14 @@ class Preacher:
         while video_path == None:
             try:
                 replace_animate(self.animate_path, code_str)
+                print("CHECKING CODE-2")
                 video_path = render_video(self.curr_scene_dir,plan)
+                print("CHECKING CODE-3")
             except Exception as e:
+                error_msg = str(e)  # Capture the actual error message
                 code_str = eval(
                 self.evaluator(
-                    prompt= code_str+ "\n"+ eval_prompt,
+                    prompt= code_str+ "\n"+ eval_prompt + f"\nError message: {error_msg}",
                 ))
                 code_str = eval(
                     self.evaluator(

@@ -198,14 +198,22 @@ def extract_code(input_string):
         return input_string
 
 def replace_animate(file_path, text):
+    print('open replace animate')
     with open(file_path, 'r',encoding='gbk') as f:
         file_content = f.read()
     text = indent_code(text)
-    new_content = re.sub(r'(def animate\(.*?\):.*?)(self.wait\(\d+\)(?:.*?self.wait\(\d+\))*)', text, file_content, flags=re.DOTALL)
-    
-    with open(file_path, 'w') as f:
-        f.write(new_content)
+    # new_content = re.sub(r'(def animate\(.*?\):.*?)(self.wait\(\d+\)(?:.*?self.wait\(\d+\))*)', text, file_content, flags=re.DOTALL)
+    pattern = r'(def animate\(.*?\):.*?)(self\.wait\(\d+\)(?:.*?self\.wait\(\d+\))*)'
 
+    new_content = re.sub(
+        pattern,
+        lambda m: text,         # <- literal insertion, no backslash processing
+        file_content,
+        flags=re.DOTALL
+    )
+    with open(file_path, "w", encoding="gbk") as f:
+        f.write(new_content)    
+    print('close replace animate')
 def indent_code(code, indent_level=4):
     # Split code into lines
     lines = code.split('\n')
