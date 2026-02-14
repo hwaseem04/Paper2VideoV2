@@ -1,4 +1,5 @@
 #
+output/federated
 output/*
 output/config.yml
 
