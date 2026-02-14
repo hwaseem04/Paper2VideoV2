@@ -6,6 +6,7 @@ output/config.yml
 # 
 data_reference/*
 resources/*
+tests/output/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

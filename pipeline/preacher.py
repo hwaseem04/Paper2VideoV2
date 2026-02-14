@@ -21,6 +21,7 @@ from tools import Wanxiang_video, Wanxiang_image, TavusClient, Qwentts
 from utils.misc import download_file, name_to_pdb_ids, download_pdb
 from utils.mol import generate_mol_animation
 from tools.retriever import PaperRetriever
+from tools.renderer import SlideRenderer
 import random
 import json
 
@@ -447,9 +448,9 @@ class Preacher:
         for i in range(len(self.high_plan_list)):
             self.scene_idx = i
             # Skip video generation for now if formats are incompatible or just placeholder
-            # self.generate_(i) 
-            # self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))
-            pass
+            self.generate_(i) 
+            self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))
+            
         # concatenate_videos(self.video_list, self.final_video_path_)
 
     def high_planning(self) -> str: # Changed return type to str
@@ -590,7 +591,14 @@ class Preacher:
         elif "cap" in style.lower():
             video_path=self.captioning_work(scene_idx)
         elif "slides" in style.lower():
-            video_path=self.slides_work(scene_idx)
+            if hasattr(self, 'slide_renderer') and self.slide_renderer:
+                try:
+                    video_path = self.slide_renderer.render_scene(self.final_plan[scene_idx], scene_idx)
+                except Exception as e:
+                    self.workflow_logger.error(f"SlideRenderer failed: {e}. Falling back to legacy slides_work.")
+                    video_path=self.slides_work(scene_idx)
+            else:
+                video_path=self.slides_work(scene_idx)
         elif "heads" in style.lower() :
              if self.talking_head_tool is None:
                 self.workflow_logger.warning("Talking head tool is disabled. Falling back to general video.")
