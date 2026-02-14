@@ -1,9 +1,0 @@
-{
-    "scenario": "We introduce BlindFed, a novel framework for double-blind federated FM adaptation. BlindFed leverages Fully Homomorphic Encryption (FHE) and Secure Multi-Party Computation (MPC) to enable collaborative learning while strictly preserving the privacy of both the foundation model and client data.",
-    "time_cost": "~8 seconds",
-    "audio_content": "Introducing BlindFed for double-blind federated adaptation. It uses FHE and MPC to protect model and data privacy during collaborative learning.",
-    "style": "Slides",
-    "source": "Fig. 1",
-    "prompt": "Conceptual illustration of the BlindFed framework, showing the interaction between the LSP (Server) with the FM and the Data owners (Clients) with their private datasets, mediated by the Double Blind Federated Adaptation process.",
-    " prompt": "Conceptual illustration of the BlindFed framework, showing the interaction between the LSP (Server) with the FM and the Data owners (Clients) with their private datasets, mediated by the Double Blind Federated Adaptation process."
-}

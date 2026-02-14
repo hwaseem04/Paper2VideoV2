@@ -1,8 +1,0 @@
-{
-    "scenario": "Following distillation, the 'online adaptation' stage commences. Clients encrypt their local data using FHE for inference, sending it to the server one block at a time. Clients then decrypt intermediate representations to update their local parallel adapters and classification head in plaintext.",
-    "time_cost": "~9 seconds",
-    "audio_content": "In online adaptation, clients encrypt data for server-side inference, then decrypt intermediate outputs to update local adapters and classification heads, ensuring double-blind privacy.",
-    "style": "Slides",
-    "source": "Figure 2",
-    "prompt": "A conceptual diagram of the BlindFed framework's online adaptation stage, illustrating the encrypted interaction between the server's foundation model and the client's local adapters and classification head."
-}

@@ -1,8 +1,0 @@
-{
-    "scenario": "Foundation Models (FMs) excel in zero-shot tasks but require adaptation for specific downstream applications. This process faces a critical challenge: ensuring double-blind privacy, where the FM owner (LSP) protects their model, and data owners (clients) safeguard their sensitive data from both the LSP and other clients.",
-    "time_cost": "~9 seconds",
-    "audio_content": "FMs need adaptation, but privacy is crucial. Model owners must protect their FM, while clients safeguard their sensitive data from all parties.",
-    "style": "Slides",
-    "source": "Fig. 1",
-    "prompt": "Conceptual illustration of the BlindFed framework for double-blind federated adaptation, showing the interaction between the LSP (Server) with the FM and multiple Data owners (Clients) with their private datasets."
-}

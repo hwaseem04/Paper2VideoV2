@@ -1,8 +1,0 @@
-{
-    "scenario": "BlindFed's first innovation is an FHE-friendly architectural redesign. This involves approximating non-linear operations like Softmax, GELU, and LayerNorm's division with low-degree polynomials, and integrating low-rank parallel adapters to ensure compatibility with encrypted computation.",
-    "time_cost": "~8 seconds",
-    "audio_content": "BlindFed redesigns the model for FHE compatibility by replacing non-linear operations with polynomial approximations and adding parallel adapters.",
-    "style": "Slides",
-    "source": "Figure 3",
-    "prompt": "A diagram showing the FHE-friendly architecture redesign, where standard transformer components are replaced with polynomial approximations and parallel adapters are integrated."
-}

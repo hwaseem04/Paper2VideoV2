@@ -1,8 +1,0 @@
-{
-    "scenario": "In terms of efficiency, BlindFed achieves a parameter count comparable to LoRA, with lower GPU memory usage and competitive latency compared to other adaptation methods. This balance highlights its suitability for scalable federated learning with numerous clients.",
-    "time_cost": "~9 seconds",
-    "audio_content": "BlindFed achieves a parameter count comparable to LoRA while offering lower GPU memory usage and competitive latency, demonstrating its efficiency for large-scale federated adaptation.",
-    "style": "Slides",
-    "source": "Figure 10",
-    "prompt": "A bar chart comparison from Figure 10 of the paper, illustrating the number of parameters, latency, and memory usage for various adaptation methods including BlindFed and LoRA."
-}

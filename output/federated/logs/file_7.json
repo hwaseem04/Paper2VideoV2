@@ -1,8 +1,0 @@
-{
-    "scenario": "BlindFed demonstrates competitive accuracy, aligning closely with LoRA and significantly outperforming linear probing, especially in heterogeneous federated settings. Crucially, the privacy-boosting SBS mechanism maintains or even marginally improves generalization performance.",
-    "time_cost": "~9 seconds",
-    "audio_content": "BlindFed matches LoRA's accuracy, outperforming linear probing in heterogeneous settings. The SBS mechanism also maintains or slightly improves generalization performance.",
-    "style": "Slides",
-    "source": "Table 1",
-    "prompt": "Table 1 from the paper, showing accuracy comparisons for CIFAR-10, CIFAR-100, and SVHN datasets across different federated learning scenarios, highlighting BlindFed and BlindFed + SBS results."
-}

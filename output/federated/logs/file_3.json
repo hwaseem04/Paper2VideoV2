@@ -1,8 +1,0 @@
-{
-    "scenario": "The adaptation process begins with a two-stage split learning approach. The initial 'offline distillation' stage involves the server pre-training the FHE-friendly FM blocks by distilling knowledge from the original FM (teacher) using an auxiliary public dataset.",
-    "time_cost": "~8 seconds",
-    "audio_content": "Adaptation starts with offline distillation. The server distills knowledge from the original model into FHE-friendly blocks using auxiliary data.",
-    "style": "Slides",
-    "source": "Figure 2",
-    "prompt": "Overview of the BlindFed framework highlighting the Offline Distillation stage where the server uses an auxiliary dataset to distill knowledge from the original FM into FHE-friendly blocks."
-}

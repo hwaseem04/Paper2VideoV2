@@ -1,8 +1,0 @@
-{
-    "scenario": "We validate BlindFed using a pre-trained ViT-Base on diverse image classification datasets, including CIFAR-10, CIFAR-100, SVHN, and Fed-ISIC2019. Experiments are conducted under varying levels of data heterogeneity to simulate real-world federated scenarios.",
-    "time_cost": "~8 seconds",
-    "audio_content": "We validate BlindFed using ViT-Base on CIFAR and SVHN datasets, testing under varying data heterogeneity to simulate real-world scenarios.",
-    "style": "Slides",
-    "source": "Table 1",
-    "prompt": "A detailed table comparing the accuracy of BlindFed and baseline methods across CIFAR-10, CIFAR-100, and SVHN datasets, highlighting performance in both centralized and federated settings with different levels of data heterogeneity."
-}
