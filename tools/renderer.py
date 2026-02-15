@@ -100,18 +100,25 @@ class SlideRenderer:
             frame_path = scene_dir / f"build_{i}.png"
             current_img.save(frame_path)
             
-            # Generate audio (Placeholder for now, assuming external TTS or dummy)
+            # Generate audio for this build step
             audio_text = build.get("audio_segment", "")
             audio_path = self._generate_audio(audio_text, scene_dir / f"audio_{i}.mp3")
             
-            # Create video clip
+            audio_clip = None
             if audio_path and Path(audio_path).exists():
                 audio_clip = AudioFileClip(str(audio_path))
+                # Audio drives the duration — no truncation
                 duration = audio_clip.duration
             else:
-                duration = 5.0 # Default if no audio
-                audio_clip = None # Silent
-                
+                # Fallback: use time_offset_sec to calculate duration
+                current_start = build.get("time_offset_sec", 0.0)
+                if i < len(builds) - 1:
+                    next_start = builds[i+1].get("time_offset_sec", current_start + 2.0)
+                    duration = max(0.5, next_start - current_start)
+                else:
+                    total_time = scene_plan.get("time_allocation_sec", 7.0)
+                    duration = max(0.5, total_time - current_start)
+            
             video_clip = ImageClip(str(frame_path)).set_duration(duration)
             if audio_clip:
                 video_clip = video_clip.set_audio(audio_clip)
@@ -120,7 +127,7 @@ class SlideRenderer:
             
         # Concatenate
         final_clip = concatenate_videoclips(clips)
-        output_path = scene_dir / f"scene_{scene_idx}.mp4"
+        output_path = scene_dir / f"scene{scene_idx}.mp4"
         final_clip.write_videofile(str(output_path), fps=24)
         
         return str(output_path)
@@ -224,7 +231,7 @@ class SlideRenderer:
             if m:
                 element_num = int(m.group(0))
                 # Determine type
-                etype = 'picture' # Default
+                etype = 'image' # Must match slides.py check for 'image' in element_type
                 if 'table' in ref_text.lower():
                     etype = 'table'
                 
@@ -238,7 +245,7 @@ class SlideRenderer:
                 # It returns the output_path
                 extracted = get_specific_element(str(self.pdf_path), etype, element_num, str(temp_fig_path))
                 
-                if Path(extracted).exists():
+                if Path(extracted).exists() and Path(extracted).stat().st_size > 0:
                     # Load and draw
                     fig_img = Image.open(extracted)
                     x, y, w, h = self._to_px(region)
@@ -309,8 +316,16 @@ class SlideRenderer:
         draw.text((draw_x, y), text, fill="black", font=font)
 
     def _draw_highlight(self, draw, bbox):
-        x, y, w, h = self._to_px({"x": bbox[0], "y": bbox[1], "w": bbox[2], "h": bbox[3]})
-        draw.rectangle([x, y, x+w, y+h], outline="red", width=8)
+        # bbox can be raw pixel coords [x1, y1, x2, y2] or normalized
+        # Check if values are > 1 to determine format
+        if all(v <= 1.0 for v in bbox):
+            # Normalized format
+            x, y, w, h = self._to_px({"x": bbox[0], "y": bbox[1], "w": bbox[2], "h": bbox[3]})
+            draw.rectangle([x, y, x+w, y+h], outline="red", width=8)
+        else:
+            # Raw pixel coords [x1, y1, x2, y2]
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            draw.rectangle([x1, y1, x2, y2], outline="red", width=8)
 
     def _to_px(self, region):
         return (

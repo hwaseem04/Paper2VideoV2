@@ -13,6 +13,9 @@ def get_specific_element(pdf_path, element_type, element_num, image_path):
     :param element_type: 'table'或'picture'
     :param element_num: 元素编号(如3表示"表3")
     """
+    if Path(image_path).exists() and Path(image_path).stat().st_size > 0:
+        return image_path
+
     pipeline_options = PdfPipelineOptions()
     pipeline_options.images_scale = 5.0
     pipeline_options.generate_page_images = True

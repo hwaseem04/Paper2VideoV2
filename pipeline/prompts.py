@@ -54,65 +54,111 @@ Style Advice:
 {style_advice}
 
 You must design the best presentation layout and animation plan for this specific scene.
-Do NOT default to a generic template. Analyze the content and the Style Advice below to make a decision.
 
-Step 1: Analyze Content & Reference
-- What is the core information? (A complex diagram? A list of contributions? A set of numerical results?)
-- Look at the [Style Advice] provided. Does it suggest a specific layout for this content type?
-- Decide on the `target_layout` that best visualizes this specific content.
+## STRICT RULES — You MUST follow these exactly:
 
-Step 2: Design the Slide & Builds
-- How should the information appear? 
-- `builds` are CRITICAL. Determine how to break the content into 2-4 reveals.
-- Example: If explaining a diagram, reveal the input -> then the encoder -> then the output.
-- Example: If listing contributions, show them one by one.
-- Define specific visual emphasis (e.g., highlighting a bounding box on a figure).
+1. **Region keys**: Only use these region keys in `layout.regions` and `elements`: `title`, `bullets`, `figure`. Do NOT invent new keys like `callout_1`, `callout_2`, `table`, `chart`, etc.
+2. **Build count consistency**: The number of entries in `builds` MUST exactly equal `expected_build_steps`. If you plan 3 builds, set `expected_build_steps` to 3.
+3. **Audio segments**: Every build step MUST have a non-empty `audio_segment` string. The audio_content should be split across build steps so each build has a meaningful narration chunk.
+4. **Action targets**: Actions can only target elements that exist in `elements`. Valid targets: `title`, `figure`, `bullets[0]`, `bullets[1]`, `bullets[2]`, etc.
+5. **Build 0 always shows title**: The first build (step_index 0) must always include `{{"type": "show", "target": "title"}}`.
+6. **Figure reference**: If using a figure, `elements.figure` must be `{{"type": "paper_figure", "ref": "Figure X"}}` where X matches `primary_sources`.
+7. **Builds reveal content progressively**: Each build step should reveal ONE new element (a bullet or a figure), not multiple at once (except build 0 which can show title + figure together).
+8. **visual_emphasis**: Always set to empty list `[]`. Do not put anything in visual_emphasis.
+9. **time_offset_sec**: Space build offsets evenly across the total time. For example, 4 builds over 10 seconds → offsets at 0.0, 2.5, 5.0, 7.5.
+10. **No extra keys**: Do not add keys outside the schema shown in the example below.
 
-Step 3: Generate JSON
-Output the plan strictly following the JSON schema.
-- `style`: Generally "Slides" (unless a specific "Professional" visualization is required).
-- `layout`: Define the geometry of regions based on your design.
+## IDEAL EXAMPLE
 
+Here is a PERFECT example of a well-formed low-level plan. Your output must follow this exact structure:
+
+High-level input was:
 ```json
 {{
   "scene_id": 1,
-  "scenario": "Detailed visual description...",
-  "time_cost_sec": 7,
-  "audio_content": "Verbal narration script...",
-  "style": "Slides", 
-  "source": ["Figure 1"],
+  "title": "The Double-Blind Privacy Challenge",
+  "summary": "Introduces the conflict in adapting Foundation Models...",
+  "paper_section": "Introduction",
+  "narrative_role": "problem",
+  "time_allocation_sec": 10,
+  "target_layout": "two_col_fig_right",
+  "primary_sources": ["Figure 1", "Section 1"]
+}}
+```
+
+Ideal output:
+```json
+{{
+  "scenario": "The slide introduces the core privacy conflict in Foundation Model adaptation. On the right, Figure 1 illustrates the Learning Service Provider (LSP) and Data Owners. On the left, bullets define their respective privacy needs, leading to the 'double-blind' requirement.",
+  "time_cost_sec": 10,
+  "audio_content": "Adapting foundation models requires balancing model privacy for providers with data privacy for owners. This 'double-blind' challenge prevents direct asset sharing during collaboration.",
+  "style": "Slides",
+  "source": ["Figure 1", "Section 1"],
   "layout": {{
-    "template": "two_col_fig_left",
+    "template": "two_col_fig_right",
     "background_color": "#FFFFFF",
     "regions": {{
-      "title":   {{"x": 0.05, "y": 0.05, "w": 0.90, "h": 0.10}},
-      "figure":  {{"x": 0.05, "y": 0.20, "w": 0.45, "h": 0.70}},
-      "bullets": {{"x": 0.55, "y": 0.20, "w": 0.40, "h": 0.70}}
+      "title":   {{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.1}},
+      "bullets": {{"x": 0.05, "y": 0.25, "w": 0.4, "h": 0.6}},
+      "figure":  {{"x": 0.5, "y": 0.2, "w": 0.45, "h": 0.7}}
     }}
   }},
   "elements": {{
-    "title": "Scene Title",
-    "figure": {{"type": "paper_figure", "ref": "Figure 1"}},
-    "bullets": ["Point 1", "Point 2"]
+    "title": "The Double-Blind Privacy Challenge",
+    "figure": {{"type": "paper_figure", "ref": "Figure 1", "caption": "Conceptual illustration of the BlindFed framework"}},
+    "bullets": [
+      "LSP: Proprietary Model Privacy",
+      "Clients: Sensitive Data Privacy",
+      "Goal: Double-Blind Adaptation"
+    ]
   }},
+  "expected_build_steps": 4,
   "builds": [
     {{
       "step_index": 0,
       "time_offset_sec": 0.0,
-      "actions": [{{"type": "show", "target": "title"}}],
-      "audio_segment": "Corresponding narration...",
+      "actions": [
+        {{"type": "show", "target": "title"}},
+        {{"type": "show", "target": "figure"}}
+      ],
+      "audio_segment": "Adapting foundation models requires",
       "visual_emphasis": []
     }},
     {{
       "step_index": 1,
-      "time_offset_sec": 2.0,
+      "time_offset_sec": 2.5,
       "actions": [{{"type": "fade_in", "target": "bullets[0]"}}],
-      "audio_segment": "Next sentence...",
+      "audio_segment": "balancing model privacy for providers",
+      "visual_emphasis": []
+    }},
+    {{
+      "step_index": 2,
+      "time_offset_sec": 5.0,
+      "actions": [{{"type": "fade_in", "target": "bullets[1]"}}],
+      "audio_segment": "with data privacy for owners.",
+      "visual_emphasis": []
+    }},
+    {{
+      "step_index": 3,
+      "time_offset_sec": 7.5,
+      "actions": [{{"type": "fade_in", "target": "bullets[2]"}}],
+      "audio_segment": "This double-blind challenge prevents direct asset sharing during collaboration.",
       "visual_emphasis": []
     }}
   ]
 }}
 ```
+
+Notice how:
+- There are exactly 4 builds and `expected_build_steps` is 4
+- Build 0 shows title + figure together
+- Builds 1-3 each reveal one bullet
+- Audio_content is split across 4 audio_segments
+- time_offset_sec values are evenly spaced (0.0, 2.5, 5.0, 7.5 across 10 seconds)
+- Only `title`, `bullets`, `figure` are used as region keys
+- visual_emphasis is always empty
+
+Now generate the low-level plan for the Input Scene above. Output ONLY valid JSON, no markdown fences, no explanation.
 """
 
 

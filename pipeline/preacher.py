@@ -258,6 +258,13 @@ class Preacher:
         except Exception as e:
             self.workflow_logger.warning(f"Failed to initialize Tavus: {e}. Talking Head generation disabled.")
 
+        # SlideRenderer
+        try:
+            self.slide_renderer = SlideRenderer(self.work_dir, self.pdf_path, tts_engine=self.audio_tool)
+        except Exception as e:
+            self.workflow_logger.warning(f"Failed to initialize SlideRenderer: {e}")
+            self.slide_renderer = None
+
         # Retriever & Style DB
         try:
             # Use the index created by tests/test_retriever.py for now
@@ -428,6 +435,13 @@ class Preacher:
         
         # Parse high level plan (list of objects)
         self.high_plan_list = _load_json_dict(self.high_plan)
+        # Handle double-serialized cache: json.dump wraps a string in quotes
+        if self.high_plan_list is None or (isinstance(self.high_plan_list, str)):
+            try:
+                unwrapped = json.loads(self.high_plan) if isinstance(self.high_plan, str) else self.high_plan
+                self.high_plan_list = _load_json_dict(unwrapped)
+            except Exception:
+                pass
         if not isinstance(self.high_plan_list, list):
              self.workflow_logger.error(f"High plan validation failed: Expected list, got {type(self.high_plan_list)}")
              # Verify if it is wrapped in a dict
@@ -450,8 +464,10 @@ class Preacher:
             # Skip video generation for now if formats are incompatible or just placeholder
             self.generate_(i) 
             self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))
+            # exit(0)
             
-        # concatenate_videos(self.video_list, self.final_video_path_)
+        concatenate_videos(self.video_list, self.final_video_path_)
+
 
     def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
@@ -471,7 +487,7 @@ class Preacher:
                 iter += 1
         else:
             high_plan = self.high_plan_by_llm()
-            
+            high_plan_legal = self.setting_plan_format(high_plan, step="high")
         self.workflow_logger.info(f"High Level Plan: {high_plan_legal}")
         # with open(self.high_plan_path, 'w') as file:
         #     file.write(high_plan_legal)
@@ -479,7 +495,7 @@ class Preacher:
             json.dump(high_plan_legal, f, ensure_ascii=False, indent=2)
         return high_plan_legal
     
-    def high_plan_by_llm(self,eval_results, high_plan) -> str:
+    def high_plan_by_llm(self, eval_results=None, high_plan=None) -> str:
         # Retrieve style context
         style_context = self.retrieve_global_style()
         
@@ -840,14 +856,19 @@ class Preacher:
                 pdf_path=Path(self.pdf_path),
             ))
             result = _load_json_dict(crop_dict)
+            # LLM may return a list of dicts; take the first element
+            if isinstance(result, list):
+                result = result[0] if result else {"type": "IMAGE", "number": 1}
             image_path = get_specific_element(self.pdf_path, result['type'], result['number'], image_path)
             
         else:
             if not eval_results:
                 eval_results = ''
+            # Fallback to summary if prompt is missing
+            old_prompt = plan.get('prompt', plan.get('summary', ''))
             self.final_plan[scene_idx]["prompt"] = eval(
             self.planner(
-                prompt= 'With this reason'+ eval_results+"Provide a better prompt"+eval_results+"\n Old prompt is"+plan['prompt'] +"\n RETURN new prompt ***ONLY***",
+                prompt= 'With this reason'+ eval_results+"Provide a better prompt"+eval_results+"\n Old prompt is"+old_prompt +"\n RETURN new prompt ***ONLY***",
                 pdf_path=Path(self.pdf_path),
             ))
 
@@ -860,6 +881,8 @@ class Preacher:
         plan = self.final_plan[scene_idx]
         eval_results = None
         self.final_video_path = self.curr_scene_dir/"scene{}.mp4".format(scene_idx)
+        if os.path.exists(self.final_video_path):
+            return self.final_video_path
         self.curr_image_path = self.curr_scene_dir/"image.png"
         self.curr_audio_path = self._ensure_audio(plan["audio_content"])
         if os.path.exists(self.curr_image_path):
@@ -873,7 +896,7 @@ class Preacher:
                 iter += 1
             #with Image.open(self.curr_image_path) as img:
                 #img.save(self.curr_image_path)
-            self.curr_image_path = create_ppt_style_image(image_path, plan['prompt'], self.curr_image_path)
+            self.curr_image_path = create_ppt_style_image(image_path, plan.get('prompt', ''), self.curr_image_path)
         
         if "time_cost" in plan:
             time = plan["time_cost"]
@@ -896,7 +919,9 @@ class Preacher:
         elif "captioning" in plan["style"].lower():
             prompt_e = prompts.gen_vis_eval
         elif "slides" in plan["style"].lower():
-            prompt_e = prompts.slides_vis_eval+plan['prompt']
+            # Use summary or audio_content as the text to evaluate against since 'prompt' is missing for slides
+            text_desc = plan.get('summary', plan.get('audio_content', ''))
+            prompt_e = prompts.slides_vis_eval + text_desc
         else: print("error: Please check the style file of"+plan["scenario"])
         eval_results = eval(
             self.evaluator(

@@ -38,20 +38,46 @@ class Math_visual(Scene):
         self.animate()
 
     def animate(self):
-        # Define a simple circle
-        circle = Circle(radius=1, color="BLUE")
+        # Create axes for complexity visualization
+        axes = Axes(
+            x_range=[0, 10, 1],
+            y_range=[0, 100, 10],
+            x_length=6,
+            y_length=6,
+            axis_config={"include_tip": True}
+        ).to_edge(DOWN, buff=0.5)
     
-        # Define a simple square
-        square = Square(side_length=2, color="RED")
-        square.shift(RIGHT * 2)
+        # Define complexity functions: O(N^2) and O(N)
+        n_squared = axes.plot(lambda x: x**2, x_range=[0, 9.5], color=RED)
+        n_linear = axes.plot(lambda x: 8*x, x_range=[0, 10], color=GREEN)
     
-        # Create animations
-        self.play(Create(circle))
-        self.play(Transform(circle, square))
-        self.play(Rotate(square, angle=PI/2))
-        self.play(FadeOut(square))
+        # Labels for the curves positioned using coordinate-to-point mapping
+        n_squared_label = MathTex("O(N^2)", color=RED).scale(0.6).move_to(axes.c2p(7, 85))
+        n_linear_label = MathTex("O(N)", color=GREEN).scale(0.6).move_to(axes.c2p(9, 55))
     
-        self.wait(3)
+        # Contextual labels for the graph using standard axis label methods
+        title = Tex("Computational Complexity Analysis").to_edge(UP)
+        x_label = axes.get_x_axis_label(MathTex("N"))
+        y_label = axes.get_y_axis_label(MathTex("T(N)"))
+    
+        # Animation sequence
+        self.play(Create(axes), Write(title))
+        self.play(Write(x_label), Write(y_label))
+        
+        # Show growth of O(N^2) - Quadratic complexity
+        self.play(Create(n_squared), Write(n_squared_label))
+        
+        # Show growth of O(N) - Linear complexity
+        self.play(Create(n_linear), Write(n_linear_label))
+    
+        # Highlight the Efficiency Gap at N=9
+        p_top = axes.c2p(9, 81)
+        p_bottom = axes.c2p(9, 72)
+        indicator_line = DashedLine(start=p_bottom, end=p_top, color=YELLOW)
+        gap_text = Tex("Efficiency Gap", color=YELLOW).scale(0.5).next_to(indicator_line, RIGHT)
+        
+        self.play(Create(indicator_line), Write(gap_text))
+        self.wait(5)
 
 
 
