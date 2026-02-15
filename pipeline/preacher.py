@@ -17,7 +17,7 @@ from utils.textwork import merge_dict_keys_values, classify_response, text_to_li
 from utils                                                                                                                                                .videowork import extract_key_frames, merge_video_audio, image_to_images, image_to_video, concatenate_videos
 from utils.math_vis import render_video
 from moviepy.editor import VideoFileClip
-from tools import Wanxiang_video, Wanxiang_image, TavusClient, Qwentts
+from tools import Wanxiang_video, Wanxiang_image, Qwentts
 from utils.misc import download_file, name_to_pdb_ids, download_pdb
 from utils.mol import generate_mol_animation
 from tools.retriever import PaperRetriever
@@ -59,7 +59,6 @@ class Preacher:
         max_low_plan_iteration: int = 30,
         max_generate_iteration: int = 10,
         general_video_work: str = "wanx",
-        talking_head_work: str = "Tavus",
         captioning_work: str = "wanx",
         slides_work: str = "xinghuo",
         audio_work: str = "qwentts",
@@ -80,7 +79,6 @@ class Preacher:
             max_generate_iteration,
             art_work,
             general_video_work,
-            talking_head_work,
             captioning_work,
             slides_work,
             audio_work,
@@ -102,7 +100,6 @@ class Preacher:
         max_generate_iteration:int,
         art_work: str,
         general_video_tool: str ,
-        talking_head_tool: str,
         captioning_tool: str  ,
         slides_tool: str ,
         audio_tool: str ,
@@ -121,7 +118,6 @@ class Preacher:
         self.max_low_plan_iteration=max_low_plan_iteration
         
         self.general_video_tool = general_video_tool
-        self.talking_head_tool= talking_head_tool
         self.captioning_tool= captioning_tool
         self.slides_tool = slides_tool
         self.audio_tool = audio_tool
@@ -241,22 +237,6 @@ class Preacher:
             self.general_video_tool = Wanxiang_video(config_path=llm_config_path)
         if self.captioning_tool == "wanx":
             self.captioning_tool = Wanxiang_image(config_path=llm_config_path)
-            
-        # Conditionally initialize Tavus
-        self.talking_head_tool = None
-        try:
-             # Check if key exists and is not empty before init
-            with open(llm_config_path, "r") as f:
-                import yaml
-                cfg = yaml.safe_load(f)
-                tavus_key = cfg.get("Tavus", {}).get("API_KEY", "")
-            
-            if tavus_key:
-                self.talking_head_tool = TavusClient(config_path=llm_config_path)
-            else:
-                self.workflow_logger.warning("Tavus API key missing. Talking Head generation disabled.")
-        except Exception as e:
-            self.workflow_logger.warning(f"Failed to initialize Tavus: {e}. Talking Head generation disabled.")
 
         # SlideRenderer
         try:
@@ -615,15 +595,6 @@ class Preacher:
                     video_path=self.slides_work(scene_idx)
             else:
                 video_path=self.slides_work(scene_idx)
-        elif "heads" in style.lower() :
-             if self.talking_head_tool is None:
-                self.workflow_logger.warning("Talking head tool is disabled. Falling back to general video.")
-                print("Talking head tool is disabled. Falling back to general video.")
-                # Update style to avoid evaluation errors
-                self.final_plan[scene_idx]["style"] = "General Video"
-                video_path = self.general_work(scene_idx)
-             else:
-                video_path = self.talking_head_work(scene_idx)
         else: print("error: Please check the style file")
         return video_path
 
@@ -828,20 +799,7 @@ class Preacher:
         image_to_video(self.curr_image_path, self.curr_audio_path, time, self.final_video_path)
         return self.final_video_path
 
-    def talking_head_single_work(self, audio_url, final_video_path):
-        video_url = self.talking_head_tool.generate_and_download(audio_url, final_video_path)
-        return video_url
-    
-    def talking_head_work(self, scene_idx):
-        plan = self.final_plan[scene_idx]
-        self.final_video_path = self.curr_scene_dir/"scene{}.mp4".format(scene_idx)
-        audio_url = self._ensure_audio(plan["audio_content"], return_url=True)
-        if os.path.exists(self.final_video_path):
-            pass
-        else:
-            video_url = self.talking_head_single_work(audio_url, self.final_video_path)
-            self.final_video_path = download_file(video_url, self.curr_scene_dir/"scene{}.mp4".format(scene_idx))
-        return self.final_video_path
+
     
     def slides_single_work(self, scene_idx, plan, image_path, eval_results=None):
         if eval_results==None and (os.path.exists(image_path) is False):
