@@ -92,9 +92,14 @@ class SlideRenderer:
         # Base image state
         current_img = self._create_base_slide(layout, elements)
         
+        # Track all visible bullets across builds to prevent overlap
+        all_visible_bullets = set()
+
         for i, build in enumerate(builds):
             # Apply build actions to current image
-            current_img = self._apply_build_actions(current_img, build.get("actions", []), elements, layout)
+            current_img, all_visible_bullets = self._apply_build_actions(
+                current_img, build.get("actions", []), elements, layout, all_visible_bullets
+            )
             
             # Save frame for debugging
             frame_path = scene_dir / f"build_{i}.png"
@@ -154,71 +159,94 @@ class SlideRenderer:
         
         return img
 
-    def _apply_build_actions(self, img, actions, elements, layout):
+    def _apply_build_actions(self, img, actions, elements, layout, cumulative_visible_bullets=None):
         new_img = img.copy()
         draw = ImageDraw.Draw(new_img)
         regions = layout.get("regions", {})
-        
+
+        # Track cumulative visible bullets across all builds
+        if cumulative_visible_bullets is None:
+            cumulative_visible_bullets = set()
+
+        # Collect new bullet indices from this build's actions
         for action in actions:
             atype = action.get("type")
             target = action.get("target")
-            
+
+            if (atype == "show" or atype == "fade_in") and target and target.startswith("bullets"):
+                try:
+                    idx = int(target.split("[")[1].strip("]"))
+                    cumulative_visible_bullets.add(idx)
+                except:
+                    pass
+
+        # Render non-bullet actions
+        for action in actions:
+            atype = action.get("type")
+            target = action.get("target")
+
+            # Skip bullet actions (handled separately below)
+            if target and target.startswith("bullets"):
+                continue
+
             if atype == "show" or atype == "fade_in":
-                # Determine content and region
                 content = None
                 region = None
-                
+
                 if target == "title":
                     content = elements.get("title")
                     region = regions.get("title")
                     if content and region:
                         self._date_text(draw, content, region, self.title_font, align="center")
-                        
+
                 elif target == "figure":
                     fig_info = elements.get("figure")
                     region = regions.get("figure")
                     if fig_info and region:
                         self._draw_figure(new_img, fig_info, region)
-                        
-                elif target.startswith("bullets"):
-                    # target="bullets[0]"
-                    try:
-                        idx = int(target.split("[")[1].strip("]"))
-                        bullets = elements.get("bullets", [])
-                        if idx < len(bullets):
-                             content = bullets[idx]
-                             region = regions.get("bullets")
-                             self._draw_bullet(draw, content, region, idx, len(bullets))
-                    except:
-                        pass
-                
+
                 else:
                     # Generic handling for any other target
-                    # Allows swapping content in a region using "content_ref"
-                    # e.g. target="figure" (region), content_ref="figure_2" (element)
                     element_key = action.get("content_ref", target)
-                    
+
                     if element_key in elements:
                         content = elements[element_key]
                         region = regions.get(target)
-                        
+
                         if region:
                             if isinstance(content, str):
-                                # Generic Text
-                                # Use title font if target is title, else body
                                 font = self.title_font if "title" in target.lower() else self.body_font
                                 self._date_text(draw, content, region, font, align="center" if "title" in target.lower() else "left")
-                                
+
                             elif isinstance(content, dict) and content.get("type") == "paper_figure":
                                 self._draw_figure(new_img, content, region)
 
             elif atype == "highlight":
-                 # Draw a red rectangle or similar
-                 bbox = action.get("target_bbox") # [x, y, w, h] normalized
+                 bbox = action.get("target_bbox")
                  if bbox:
                      self._draw_highlight(draw, bbox)
 
-        return new_img
+        # Redraw ALL visible bullets in correct stacked positions
+        # This clears and redraws the bullet region to prevent overlap
+        if cumulative_visible_bullets:
+            bullets = elements.get("bullets", [])
+            bullet_region = regions.get("bullets")
+
+            if bullet_region and bullets:
+                # Clear the bullet region first (fill with background color)
+                bx, by, bw, bh = self._to_px(bullet_region)
+                bg_color = layout.get("background_color", "#FFFFFF")
+                draw.rectangle([bx, by, bx + bw, by + bh], fill=bg_color)
+
+                bullet_y_offset = 0
+
+                for idx in sorted(cumulative_visible_bullets):
+                    if idx < len(bullets):
+                        content = bullets[idx]
+                        height_used = self._draw_bullet(draw, content, bullet_region, bullet_y_offset)
+                        bullet_y_offset += height_used + 10
+
+        return new_img, cumulative_visible_bullets
 
     def _draw_figure(self, img, fig_info, region):
         # Extract figure from PDF
@@ -293,16 +321,109 @@ class SlideRenderer:
                 self.logger.error(f"TTS failed: {e}")
         return None
 
-    def _draw_bullet(self, draw, text, region, index, total):
-        if not region: return
+    def _draw_bullet(self, draw, text, region, bullet_y_offset=0):
+        """
+        Draw a bullet point with automatic text wrapping.
+
+        Args:
+            draw: PIL ImageDraw object
+            text: Bullet text content
+            region: Region dictionary with normalized coordinates
+            bullet_y_offset: Y offset in pixels from region top (for dynamic positioning)
+
+        Returns:
+            Height in pixels consumed by this bullet (including wrapping)
+        """
+        if not region:
+            return 0
+
         x, y, w, h = self._to_px(region)
-        
-        # Simple spacing
-        line_height = h / (total + 1) # Distribution
-        start_y = y + (index * line_height)
-        
-        # Draw bullet point
-        draw.text((x, start_y), f"• {text}", fill="black", font=self.body_font)
+
+        # Constants for bullet formatting
+        BULLET_CHAR = "• "
+        BULLET_INDENT = 30  # Pixels for bullet character
+        LINE_SPACING = 1.15  # Standard line spacing (like Google Slides default)
+
+        # Calculate available width for text (excluding bullet character)
+        available_width = w - BULLET_INDENT - 20  # 20px right margin
+
+        # Get font metrics for proper line height calculation
+        # Use ascent + descent for accurate font height
+        try:
+            ascent, descent = self.body_font.getmetrics()
+            font_height = ascent + descent
+        except AttributeError:
+            # Fallback: use bounding box if getmetrics not available
+            bbox = self.body_font.getbbox("Ay")
+            font_height = bbox[3] - bbox[1]
+
+        # Apply standard line spacing (1.15x like Google Slides)
+        line_height = int(font_height * LINE_SPACING)
+
+        # Word-wrap the text
+        wrapped_lines = self._wrap_text(text, available_width, self.body_font)
+
+        # Calculate starting position
+        current_y = y + bullet_y_offset
+
+        # Draw bullet character on first line
+        draw.text((x, current_y), BULLET_CHAR, fill="black", font=self.body_font)
+
+        # Draw text lines with proper indentation
+        for i, line in enumerate(wrapped_lines):
+            if i == 0:
+                # First line: positioned after bullet
+                text_x = x + BULLET_INDENT
+            else:
+                # Wrapped lines: indented to align with first line text
+                text_x = x + BULLET_INDENT
+
+            draw.text((text_x, current_y), line, fill="black", font=self.body_font)
+            current_y += line_height
+
+        # Return total height consumed
+        total_height = len(wrapped_lines) * line_height
+        return total_height
+
+    def _wrap_text(self, text, max_width, font):
+        """
+        Wrap text to fit within max_width using the given font.
+
+        Args:
+            text: Text to wrap
+            max_width: Maximum width in pixels
+            font: PIL ImageFont object
+
+        Returns:
+            List of wrapped text lines
+        """
+        words = text.split()
+        lines = []
+        current_line = []
+
+        for word in words:
+            # Test if adding this word exceeds max width
+            test_line = ' '.join(current_line + [word])
+            bbox = font.getbbox(test_line)
+            text_width = bbox[2] - bbox[0]
+
+            if text_width <= max_width:
+                current_line.append(word)
+            else:
+                # Current line is full, start new line
+                if current_line:
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                else:
+                    # Single word is too long, force it on its own line
+                    lines.append(word)
+                    current_line = []
+
+        # Add remaining words
+        if current_line:
+            lines.append(' '.join(current_line))
+
+        return lines if lines else [text]
 
     def _date_text(self, draw, text, region, font, align="left"):
         if not region: return

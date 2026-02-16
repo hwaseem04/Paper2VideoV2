@@ -58,12 +58,12 @@ You must design the best presentation layout and animation plan for this specifi
 ## STRICT RULES — You MUST follow these exactly:
 
 1. **Region keys**: Only use these region keys in `layout.regions` and `elements`: `title`, `bullets`, `figure`. Do NOT invent new keys like `callout_1`, `callout_2`, `table`, `chart`, etc.
-2. **Build count consistency**: The number of entries in `builds` MUST exactly equal `expected_build_steps`. If you plan 3 builds, set `expected_build_steps` to 3.
+2. **Build count**: Set `expected_build_steps` to `1 + number_of_bullets`. Build 0 reveals the title (and optionally the figure), then each subsequent build reveals exactly one bullet. This OVERRIDES the high-level plan's `expected_build_steps`.
 3. **Audio segments**: Every build step MUST have a non-empty `audio_segment` string. The audio_content should be split across build steps so each build has a meaningful narration chunk.
 4. **Action targets**: Actions can only target elements that exist in `elements`. Valid targets: `title`, `figure`, `bullets[0]`, `bullets[1]`, `bullets[2]`, etc.
 5. **Build 0 always shows title**: The first build (step_index 0) must always include `{{"type": "show", "target": "title"}}`.
 6. **Figure reference**: If using a figure, `elements.figure` must be `{{"type": "paper_figure", "ref": "Figure X"}}` where X matches `primary_sources`.
-7. **Builds reveal content progressively**: Each build step should reveal ONE new element (a bullet or a figure), not multiple at once (except build 0 which can show title + figure together).
+7. **One bullet per build**: After build 0, each subsequent build step reveals exactly ONE bullet. Never reveal multiple bullets in the same build step.
 8. **visual_emphasis**: Always set to empty list `[]`. Do not put anything in visual_emphasis.
 9. **time_offset_sec**: Space build offsets evenly across the total time. For example, 4 builds over 10 seconds → offsets at 0.0, 2.5, 5.0, 7.5.
 10. **No extra keys**: Do not add keys outside the schema shown in the example below.
