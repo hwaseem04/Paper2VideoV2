@@ -485,6 +485,14 @@ class Preacher:
         self.workflow_logger.info("Step 4: Generating scene videos...")
         self.workflow_logger.info("=" * 50)
 
+        # Clean up previous scene outputs so videos are always regenerated
+        import shutil
+        for i in range(len(self.high_plan_list)):
+            scene_dir = self.work_dir / f"scene_{i}"
+            if scene_dir.exists():
+                self.workflow_logger.info(f"Removing previous scene directory: {scene_dir}")
+                shutil.rmtree(scene_dir)
+
         self.video_list = []
         for i in range(len(self.high_plan_list)):
             self.scene_idx = i
