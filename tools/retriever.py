@@ -108,6 +108,21 @@ class PaperRetriever:
             
         self.logger.info(f"Index built with {self.index.ntotal} documents.")
 
+    def build_from_dir(self, source_dir: Path, save_path: Optional[Path] = None):
+        """
+        Builds index from all PDFs in a directory.
+        """
+        source_dir = Path(source_dir)
+        if not source_dir.exists():
+            raise FileNotFoundError(f"Source directory {source_dir} not found")
+            
+        pdf_paths = list(source_dir.glob("*.pdf"))
+        if not pdf_paths:
+            self.logger.warning(f"No PDFs found in {source_dir}")
+            return
+            
+        self.build_index(pdf_paths, save_path)
+
     def save_index(self, path: Path):
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)

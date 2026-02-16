@@ -75,74 +75,96 @@ Here is a PERFECT example of a well-formed low-level plan. Your output must foll
 High-level input was:
 ```json
 {{
-  "scene_id": 1,
-  "title": "The Double-Blind Privacy Challenge",
-  "summary": "Introduces the conflict in adapting Foundation Models...",
-  "paper_section": "Introduction",
-  "narrative_role": "problem",
-  "time_allocation_sec": 10,
-  "target_layout": "two_col_fig_right",
-  "primary_sources": ["Figure 1", "Section 1"]
-}}
+    "scene_id": 1,
+    "title": "Bridging the Gap in 3D Action Recognition",
+    "summary": "Introduces the IKEA Ego 3D dataset, addressing the scarcity of ego-view 3D point cloud data. Unlike existing static-sensor datasets, this work focuses on fine-grained furniture assembly actions captured from a first-person perspective using a HoloLens 2.",
+    "paper_section": "Introduction",
+    "narrative_role": "problem",
+    "time_allocation_sec": 7,
+    "target_layout": "two_col_fig_left",
+    "text_density": "low",
+    "visual_density": "medium",
+    "uses_builds": true,
+    "expected_build_steps": 2,
+    "primary_sources": ["Figure 1", "Section 1"],
+    "reference_style_examples": ["3DInAction- Understanding Human Actions in 3D Point Clouds"]
+  }}
 ```
 
 Ideal output:
 ```json
 {{
-  "scenario": "The slide introduces the core privacy conflict in Foundation Model adaptation. On the right, Figure 1 illustrates the Learning Service Provider (LSP) and Data Owners. On the left, bullets define their respective privacy needs, leading to the 'double-blind' requirement.",
-  "time_cost_sec": 10,
-  "audio_content": "Adapting foundation models requires balancing model privacy for providers with data privacy for owners. This 'double-blind' challenge prevents direct asset sharing during collaboration.",
+  "scenario": "The slide introduces the IKEA Ego 3D dataset, highlighting the problem of data scarcity in ego-view 3D action recognition. Figure 1, showing the dataset overview, is positioned on the left, while a bullet on the right summarizes the limitations of existing static-sensor datasets.",
+  "time_cost_sec": 7,
+  "audio_content": "Current 3D action recognition is limited by static sensors and a lack of ego-view data. We introduce the IKEA Ego 3D dataset to bridge this gap.",
   "style": "Slides",
-  "source": ["Figure 1", "Section 1"],
+  "source": [
+    "Figure 1",
+    "Section 1"
+  ],
   "layout": {{
-    "template": "two_col_fig_right",
+    "template": "two_col_fig_left",
     "background_color": "#FFFFFF",
     "regions": {{
-      "title":   {{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.1}},
-      "bullets": {{"x": 0.05, "y": 0.25, "w": 0.4, "h": 0.6}},
-      "figure":  {{"x": 0.5, "y": 0.2, "w": 0.45, "h": 0.7}}
+      "title": {{
+        "x": 0.05,
+        "y": 0.05,
+        "w": 0.9,
+        "h": 0.1
+      }},
+      "figure": {{
+        "x": 0.05,
+        "y": 0.2,
+        "w": 0.45,
+        "h": 0.7
+      }},
+      "bullets": {{
+        "x": 0.55,
+        "y": 0.25,
+        "w": 0.4,
+        "h": 0.6
+      }}
     }}
   }},
   "elements": {{
-    "title": "The Double-Blind Privacy Challenge",
-    "figure": {{"type": "paper_figure", "ref": "Figure 1", "caption": "Conceptual illustration of the BlindFed framework"}},
+    "title": "Bridging the Gap in 3D Action Recognition",
+    "figure": {{
+      "type": "paper_figure",
+      "ref": "Figure 1",
+      "caption": "Overview of the IKEA Ego 3D dataset"
+    }},
     "bullets": [
-      "LSP: Proprietary Model Privacy",
-      "Clients: Sensitive Data Privacy",
-      "Goal: Double-Blind Adaptation"
+      "Static sensors hinder fine-grained ego-view recognition"
     ]
   }},
-  "expected_build_steps": 4,
+  "expected_build_steps": 2,
   "builds": [
     {{
       "step_index": 0,
       "time_offset_sec": 0.0,
       "actions": [
-        {{"type": "show", "target": "title"}},
-        {{"type": "show", "target": "figure"}}
+        {{
+          "type": "show",
+          "target": "title"
+        }},
+        {{
+          "type": "show",
+          "target": "figure"
+        }}
       ],
-      "audio_segment": "Adapting foundation models requires",
+      "audio_segment": "Current 3D action recognition is limited by static sensors and a lack of ego-view data.",
       "visual_emphasis": []
     }},
     {{
       "step_index": 1,
-      "time_offset_sec": 2.5,
-      "actions": [{{"type": "fade_in", "target": "bullets[0]"}}],
-      "audio_segment": "balancing model privacy for providers",
-      "visual_emphasis": []
-    }},
-    {{
-      "step_index": 2,
-      "time_offset_sec": 5.0,
-      "actions": [{{"type": "fade_in", "target": "bullets[1]"}}],
-      "audio_segment": "with data privacy for owners.",
-      "visual_emphasis": []
-    }},
-    {{
-      "step_index": 3,
-      "time_offset_sec": 7.5,
-      "actions": [{{"type": "fade_in", "target": "bullets[2]"}}],
-      "audio_segment": "This double-blind challenge prevents direct asset sharing during collaboration.",
+      "time_offset_sec": 3.5,
+      "actions": [
+        {{
+          "type": "fade_in",
+          "target": "bullets[0]"
+        }}
+      ],
+      "audio_segment": "We introduce the IKEA Ego 3D dataset to bridge this gap.",
       "visual_emphasis": []
     }}
   ]

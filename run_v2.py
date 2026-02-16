@@ -86,7 +86,7 @@ def main():
         return
 
     # 3. TRUNCATE TO ONE SCENE
-    print(f"Original plan has {len(agent.high_plan_list)} scenes. Processing all.")
+    print(f"Plan has {len(agent.high_plan_list)} scenes. Processing all.")
     # agent.high_plan_list = agent.high_plan_list[:1]
     
     # 4. Low Planning Loop

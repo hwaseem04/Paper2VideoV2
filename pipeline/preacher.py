@@ -245,10 +245,34 @@ class Preacher:
             self.workflow_logger.warning(f"Failed to initialize SlideRenderer: {e}")
             self.slide_renderer = None
 
+        
         # Retriever & Style DB
         try:
-            # Use the index created by tests/test_retriever.py for now
-            index_path = Path("output/test_index") 
+            # Check for pre-computed index in data_reference first
+            data_ref_index = Path("data_reference/paper_index")
+            legacy_index = Path("output/test_index")
+            
+            if data_ref_index.exists():
+                index_path = data_ref_index
+                self.workflow_logger.info(f"Using pre-computed index at {index_path}")
+            elif legacy_index.exists():
+                index_path = legacy_index
+                self.workflow_logger.info(f"Using legacy index at {index_path}")
+            else:
+                # Fallback: try to build from dataset if no index found
+                self.workflow_logger.info("No index found. Attempting to build from 'dataset' directory...")
+                index_path = legacy_index # Default save location for auto-build
+                source_dir = Path("dataset")
+                if source_dir.exists():
+                    temp_retriever = PaperRetriever(logger=self.workflow_logger)
+                    try:
+                        temp_retriever.build_from_dir(source_dir, save_path=index_path)
+                        self.workflow_logger.info("Index built successfully.")
+                    except Exception as e:
+                         self.workflow_logger.error(f"Failed to build index: {e}")
+                else:
+                     self.workflow_logger.warning("'dataset' directory not found. Cannot build index.")
+
             self.retriever = PaperRetriever(index_path=index_path)
             
             self.style_db = {}
@@ -298,18 +322,13 @@ class Preacher:
             # Find if we have video style for any of these
             style_matches = []
             for p in similar_papers:
-                # heuristic: check if stem matches
                 pdf_stem = Path(p['path']).stem
-                # Check fuzzy or exact match in style_db keys
-                for vid_id in self.style_db.keys():
-                    if pdf_stem in vid_id or vid_id in pdf_stem:
-                         style_matches.append(vid_id)
+                if pdf_stem in self.style_db:
+                    style_matches.append(pdf_stem)
+                else:
+                    raise KeyError(f"Retrieved paper '{pdf_stem}' not found in style_db. FAISS index and style DB are out of sync.")
             
-            # If no direct match, take random available styles as examples
-            if not style_matches and self.style_db:
-                # Fallback: use random styles if no specific matches found
-                style_matches = random.sample(list(self.style_db.keys()), min(3, len(self.style_db)))
-            
+           
             total_slides = 0
             if style_matches:
                 context.append("\n## Reference Presentation Styles (from existing videos):")
@@ -406,67 +425,107 @@ class Preacher:
         if return_url:
             return url 
         return Path(download_file(url, target)) 
-    def run(self, high_plan: Optional[list[Subtask]]=None) -> None:#low_plan: Optional[list[Subtask]]=None, cache: Optional[Path]=None
+    def run(self, high_plan: Optional[list[Subtask]]=None) -> None:
+        # 1. High Planning
+        self.workflow_logger.info("=" * 50)
+        self.workflow_logger.info("Step 1: High-level planning...")
+        self.workflow_logger.info("=" * 50)
+
         if high_plan is not None:
+            self.workflow_logger.info(f"Loading pre-generated high plan from {high_plan}")
             with open(high_plan, 'r') as file:
-                self.high_plan = file.read() 
+                self.high_plan = file.read()
+        elif self.high_plan_path.exists():
+            self.workflow_logger.info(f"High plan already cached at {self.high_plan_path}. Loading...")
+            with open(self.high_plan_path, 'r') as file:
+                self.high_plan = file.read()
         else:
-            self.high_plan=self.high_planning()
-        
-        # Parse high level plan (list of objects)
+            self.high_plan = self.high_planning()
+
+        # 2. Parse High Plan
+        self.workflow_logger.info("=" * 50)
+        self.workflow_logger.info("Step 2: Parsing high-level plan...")
+        self.workflow_logger.info("=" * 50)
+
         self.high_plan_list = _load_json_dict(self.high_plan)
+
         # Handle double-serialized cache: json.dump wraps a string in quotes
-        if self.high_plan_list is None or (isinstance(self.high_plan_list, str)):
+        if self.high_plan_list is None or isinstance(self.high_plan_list, str):
             try:
                 unwrapped = json.loads(self.high_plan) if isinstance(self.high_plan, str) else self.high_plan
                 self.high_plan_list = _load_json_dict(unwrapped)
             except Exception:
                 pass
+
+        # Handle dict-wrapped plans (e.g. {"scenes": [...]})
+        if isinstance(self.high_plan_list, dict):
+            for v in self.high_plan_list.values():
+                if isinstance(v, list):
+                    self.high_plan_list = v
+                    break
+
         if not isinstance(self.high_plan_list, list):
-             self.workflow_logger.error(f"High plan validation failed: Expected list, got {type(self.high_plan_list)}")
-             # Verify if it is wrapped in a dict
-             if isinstance(self.high_plan_list, dict):
-                 # Try to find a list value
-                 for v in self.high_plan_list.values():
-                     if isinstance(v, list):
-                         self.high_plan_list = v
-                         break
-        
-        self.final_plan=[]
+            raise ValueError(f"High plan parsing failed: expected list, got {type(self.high_plan_list)}. Raw: {str(self.high_plan)[:200]}")
+
+        self.workflow_logger.info(f"Parsed {len(self.high_plan_list)} scenes from high plan.")
+
+        # 3. Low Planning
+        self.workflow_logger.info("=" * 50)
+        self.workflow_logger.info("Step 3: Low-level planning...")
+        self.workflow_logger.info("=" * 50)
+
+        self.final_plan = []
         for i in range(len(self.high_plan_list)):
-            self.final_plan.append({}) # Initialize empty, will filter later
+            self.final_plan.append({})
             self.scene_idx = i
             self.low_planning(self.high_plan_list[i])
-        
+
+        # 4. Video Generation
+        self.workflow_logger.info("=" * 50)
+        self.workflow_logger.info("Step 4: Generating scene videos...")
+        self.workflow_logger.info("=" * 50)
+
         self.video_list = []
         for i in range(len(self.high_plan_list)):
             self.scene_idx = i
-            # Skip video generation for now if formats are incompatible or just placeholder
-            self.generate_(i) 
-            self.video_list.append(self.work_dir /f"scene_{self.scene_idx}" / "scene{}.mp4".format(self.scene_idx))
-            # exit(0)
-            
+            self.workflow_logger.info(f"Generating scene {i}...")
+            self.generate_(i)
+
+            video_path = self.work_dir / f"scene_{i}" / f"scene{i}.mp4"
+            if video_path.exists():
+                self.workflow_logger.info(f"Scene {i} video generated at {video_path}")
+                self.video_list.append(video_path)
+            else:
+                self.workflow_logger.error(f"Scene {i} video NOT found at {video_path}")
+
+        # 5. Concatenation
+        self.workflow_logger.info("=" * 50)
+        self.workflow_logger.info("Step 5: Concatenating final video...")
+        self.workflow_logger.info("=" * 50)
+
+        if not self.video_list:
+            raise RuntimeError("No scene videos were generated. Cannot concatenate.")
+
         concatenate_videos(self.video_list, self.final_video_path_)
+        self.workflow_logger.info(f"Final video saved at {self.final_video_path_}")
 
 
     def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
-        if os.path.exists(self.high_plan_path):
-            with open(self.high_plan_path, "r") as file:
-                high_plan_legal = file.read()
-                return high_plan_legal
+
+        style_context = self.retrieve_global_style()
         if self.with_reflection:
             high_planning_success=False
             iter=0
             eval_results=None
             high_plan=None
             while high_planning_success == False and (iter < self.max_high_plan_iteration):
-                high_plan = self.high_plan_by_llm(eval_results, high_plan)
+                high_plan = self.high_plan_by_llm(style_context, eval_results, high_plan)
                 high_plan_legal = self.setting_plan_format(high_plan,step="high")
                 high_planning_success, eval_results = self.high_evaluate_by_llm(high_plan_legal)
                 iter += 1
         else:
-            high_plan = self.high_plan_by_llm()
+            high_plan = self.high_plan_by_llm(style_context)
             high_plan_legal = self.setting_plan_format(high_plan, step="high")
         self.workflow_logger.info(f"High Level Plan: {high_plan_legal}")
         # with open(self.high_plan_path, 'w') as file:
@@ -475,12 +534,9 @@ class Preacher:
             json.dump(high_plan_legal, f, ensure_ascii=False, indent=2)
         return high_plan_legal
     
-    def high_plan_by_llm(self, eval_results=None, high_plan=None) -> str:
-        # Retrieve style context
-        style_context = self.retrieve_global_style()
-        
+    def high_plan_by_llm(self, style_context, eval_results=None, high_plan=None) -> str:
         if eval_results:
-            prompt = high_plan + ' \n '+ prompts.high_level_replanning_prompt + eval_results
+            prompt = high_plan + ' \n '+ prompts.high_level_replanning_prompt + eval_results + ' \n ' + style_context
         else:
             # Inject style context into the placeholder
             # Note: prompts.high_level_planning_prompt has {style_context} placeholder now
@@ -518,54 +574,59 @@ class Preacher:
         plan_file = self.log_dir/f"file_{self.scene_idx}.json"
         # Check if plan file already exists - if so, load and skip planning
         if os.path.exists(plan_file):
+            self.workflow_logger.info(f"Scene {self.scene_idx}: Low plan already exists at {plan_file}. Skipping generation.")
             with open(plan_file, "r") as file:
                 self.final_plan[self.scene_idx] = json.load(file)
                 return None
         
+        self.workflow_logger.info(f"Scene {self.scene_idx}: No cached plan found. Generating low-level plan...")
         # Initialize with high-level info
-        # Map new schema keys if necessary or just copy
         self.final_plan[self.scene_idx] = part_plan.copy()
         
-        # Generate low-level plan details
-        # We simplify to single-shot generation + validation for now
-        # ignoring the complex multi-step reflection loop which was tied to the old schema
-        
+        style_advice = self.retrieve_scene_style(part_plan)
         eval_results = None
-        low_plan = None
+        low_plan_str = None
         
-        # formatting handled inside low_plan_by_llm
-        low_plan_str = self.low_plan_by_llm(part_plan, eval_results)
-        
-        # Parse result
-        parsed_low_plan = _load_json_dict(low_plan_str)
-        
-        if parsed_low_plan and isinstance(parsed_low_plan, dict):
-             # Merge into final plan
-             self.final_plan[self.scene_idx].update(parsed_low_plan)
+        if self.with_reflection:
+            low_planning_success = False
+            iter = 0
+            while not low_planning_success and iter < self.max_low_plan_iteration:
+                low_plan_str = self.low_plan_by_llm(part_plan, style_advice, eval_results, low_plan_str)
+                parsed_low_plan = _load_json_dict(low_plan_str)
+                if parsed_low_plan and isinstance(parsed_low_plan, dict):
+                    low_planning_success, eval_results = self.low_evaluate_by_llm(low_plan_str)
+                else:
+                    eval_results = f"Output was not valid JSON. Please output ONLY valid JSON, no markdown fences."
+                iter += 1
         else:
-             self.workflow_logger.error(f"Failed to parse low plan for scene {self.scene_idx}")
+            low_plan_str = self.low_plan_by_llm(part_plan, style_advice)
+        
+        # Parse and merge final result
+        parsed_low_plan = _load_json_dict(low_plan_str)
+        if parsed_low_plan and isinstance(parsed_low_plan, dict):
+            self.final_plan[self.scene_idx].update(parsed_low_plan)
+        else:
+            raise ValueError(f"Failed to parse low plan for scene {self.scene_idx} after all attempts. Raw output: {low_plan_str[:200]}")
         
         # Save the complete plan
         with open(plan_file, "w") as file:
             json.dump(self.final_plan[self.scene_idx], file, indent=4)
     
-    def low_plan_by_llm(self, part_plan, eval_results=None, low_plan_legal=None) -> str:
-        # Retrieve scene-specific style advice
-        style_advice = self.retrieve_scene_style(part_plan)
-        
-        try:
-             prompt = prompts.low_level_planning_prompt.format(
-                 scene_json=json.dumps(part_plan, indent=2), 
-                 style_advice=style_advice
-             )
-        except Exception as e:
-             self.workflow_logger.warning(f"Prompt formatting failed: {e}")
-             prompt = prompts.low_level_planning_prompt + "\nInput: " + str(part_plan)
+    def low_plan_by_llm(self, part_plan, style_advice, eval_results=None, low_plan_str=None) -> str:
+        if eval_results:
+            prompt = low_plan_str + ' \n ' + prompts.low_level_replanning_prompt + eval_results + ' \n ' + style_advice
+        else:
+            try:
+                prompt = prompts.low_level_planning_prompt.format(
+                    scene_json=json.dumps(part_plan, indent=2), 
+                    style_advice=style_advice
+                )
+            except Exception as e:
+                self.workflow_logger.warning(f"Prompt formatting failed: {e}")
+                prompt = prompts.low_level_planning_prompt + "\nInput: " + str(part_plan)
 
-        if self.with_example :
-             # self.low_example is usually a dict, might need adjustment if using new schema
-             # For now, append it if it's a string or convertible
-             pass 
+            if self.with_example:
+                prompt += ' \n ' + merge_dict_keys_values(self.low_example)
              
         low_plan = eval(
             self.planner(
@@ -573,7 +634,20 @@ class Preacher:
                 pdf_path=Path(self.pdf_path),
             )
         )
-        return  low_plan
+        self.workflow_logger.info(f"Low_plan scene {self.scene_idx}: {low_plan}")
+        return low_plan
+    
+    def low_evaluate_by_llm(self, low_plan_str) -> tuple:
+        prompt = prompts.low_level_evaluate_prompt + ' \n ' + low_plan_str
+        eval_results = eval(
+            self.evaluator(
+                prompt=prompt,
+                pdf_path=Path(self.pdf_path),
+            )
+        )
+        success = classify_response(eval_results)
+        self.workflow_logger.info(f"Low eval scene {self.scene_idx}: {eval_results}")
+        return success, eval_results
     
     def generate_(self, scene_idx):
         self.curr_scene_dir = self.work_dir / "scene_{}".format(scene_idx)
