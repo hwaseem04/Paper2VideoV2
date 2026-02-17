@@ -1,0 +1,122 @@
+{
+    "scene_id": 3,
+    "title": "Fine-Grained Actions & Challenges",
+    "summary": "Visualizes the diversity of furniture (LACK, KALLAX, BEKVAM) and the complexity of actions like 'spin screwdriver' or 'attach side panel'. Discusses unique challenges: ego-view camera motion, frequent occlusions, and class imbalance.",
+    "paper_section": "3.5 Dataset unique challenges",
+    "narrative_role": "technical_detail",
+    "time_allocation_sec": 8,
+    "target_layout": "grid_2x2",
+    "text_density": "medium",
+    "visual_density": "high",
+    "uses_builds": true,
+    "expected_build_steps": 4,
+    "primary_sources": [
+        "Figure 2",
+        "Figure 3",
+        "Figure 4"
+    ],
+    "reference_style_examples": [
+        "Pos3R- 6D Pose Estimation for Unseen Objects Made Easy"
+    ],
+    "extracted_content": "The IKEA Ego 3D dataset presents several unique challenges for action recognition. First, the ego-view perspective introduces significant camera motion, causing points to appear and disappear within frames, which is more complex than static sensor data. Second, the dataset contains three distinct types of point motion: action-related, noise-related, and camera-related, which are difficult to decouple. Third, there is a high degree of class imbalance, as shown in the action occurrence distribution, where some actions like 'spin leg' are frequent and long, while others like 'spin drawer knob' are short and rare. Finally, the fine-grained nature of the actions (verb-noun pairs) means that many classes are visually similar (e.g., different types of screws) but contextually distinct, requiring high-resolution ego-view data to discriminate small components.",
+    "layout": {
+        "template": "two_col_fig_right",
+        "background_color": "#FFFFFF",
+        "regions": {
+            "title": {
+                "x": 0.05,
+                "y": 0.05,
+                "w": 0.9,
+                "h": 0.1
+            },
+            "bullets": {
+                "x": 0.05,
+                "y": 0.2,
+                "w": 0.35,
+                "h": 0.7
+            },
+            "figure": {
+                "x": 0.45,
+                "y": 0.2,
+                "w": 0.5,
+                "h": 0.7
+            }
+        }
+    },
+    "style": "Slides",
+    "elements": {
+        "title": "Fine-Grained Actions & Dataset Challenges",
+        "figure": {
+            "type": "paper_figure",
+            "ref": "Figure 3",
+            "caption": "Visualization of RGB, 3D point cloud, and fine-grained action labels."
+        },
+        "bullets": [
+            "56 fine-grained verb-noun actions across 4 furniture types",
+            "Complex ego-view camera motion and point volatility",
+            "Significant class imbalance across action categories"
+        ]
+    },
+    "builds": [
+        {
+            "step_index": 0,
+            "time_offset_sec": 0.0,
+            "actions": [
+                {
+                    "type": "show",
+                    "target": "title"
+                },
+                {
+                    "type": "show",
+                    "target": "figure"
+                }
+            ],
+            "audio_segment": "The IKEA Ego 3D dataset features 56 fine-grained actions.",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 1,
+            "time_offset_sec": 2.0,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[0]"
+                }
+            ],
+            "audio_segment": "These are categorized as verb-noun actions performed across four different furniture types.",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 2,
+            "time_offset_sec": 4.0,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[1]"
+                }
+            ],
+            "audio_segment": "The dataset introduces unique challenges like complex ego-view camera motion and point volatility.",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 3,
+            "time_offset_sec": 6.0,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[2]"
+                }
+            ],
+            "audio_segment": "Finally, it exhibits significant class imbalance across the various action categories.",
+            "visual_emphasis": []
+        }
+    ],
+    "source": [
+        "Section 3.5",
+        "Figure 3",
+        "Figure 4"
+    ],
+    "time_cost": "8",
+    "audio_content": "The dataset features 56 fine-grained actions. It introduces unique challenges like ego-view camera motion and significant class imbalance.",
+    "prompt": "A slide showing three bullet points on the left describing dataset challenges like camera motion and class imbalance. On the right, Figure 3 from the paper is displayed, showing the alignment between RGB video, 3D point clouds, and action labels for furniture assembly."
+}

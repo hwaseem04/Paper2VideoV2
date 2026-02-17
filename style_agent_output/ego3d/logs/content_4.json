@@ -1,0 +1,34 @@
+{
+    "extracted_content": "The benchmark evaluates prominent 3D action recognition methods including PointNet (PN), PointNet++ (PN++), Set Transformer, PSTNet, P4Transformer, and 3DinAction. Performance is measured using top1/top3 accuracy, macro-recall, and mAP, revealing that the IKEA Ego 3D dataset is highly challenging. A key finding is that incorporating naive temporal smoothing (TS) via a convolutional layer over the temporal dimension significantly boosts performance for all per-frame baselines, with PN++ + TS achieving the highest top1 accuracy of 52.98%. Hierarchical experiments decoupling actions into nouns and verbs show that nouns are easier to recognize from static frames (spatial quality), while verbs are inherently more difficult as they require accumulating sequence information (temporal quality). Specialized models like PSTNet performed well, whereas 3DinAction was limited by the large sensor motions inherent in ego-view data, which caused temporal patches (t-patches) to collapse.",
+    "key_figures": [
+        {
+            "ref": "Figure 4",
+            "caption": "IKEA Ego 3D dataset action occurrence. A highly imbalanced dataset provides a challenge for learning-based algorithms. Note the y-axis is log scaled, therefore a small gap in this axis reflects a significant gap in proportions.",
+            "relevance": "Illustrates the class imbalance challenge that impacts the macro-recall and mAP metrics reported in the benchmark."
+        }
+    ],
+    "key_tables": [
+        {
+            "ref": "Table 2",
+            "caption": "Action recognition results on IKEA Ego 3D. Comparing between recent state-of-the-art approaches using frame accuracy (top1 and top3), macro recall and mAP metrics.",
+            "relevance": "Provides the primary performance comparison of all baseline and SOTA methods on the new dataset."
+        },
+        {
+            "ref": "Table 3",
+            "caption": "Noun recognition results. We cluster the action classes by nouns and report the performance of state-of-the-art approaches. This experiment demonstrates the spatial quality of the methods (how well they capture objects).",
+            "relevance": "Shows how well models recognize the objects involved in actions, reflecting their spatial representation power."
+        },
+        {
+            "ref": "Table 4",
+            "caption": "Verb recognition results. We cluster the action classes by verbs and report the performance of state-of-the-art approaches. This experiment demonstrates the temporal quality of the methods (how well they distinguish motions).",
+            "relevance": "Evaluates the models' ability to distinguish the motion component of actions, reflecting their temporal representation power."
+        }
+    ],
+    "key_equations": [],
+    "section_refs": [
+        "Section 4. Benchmark and Experiments",
+        "Section 4.1. Experiment setup",
+        "Section 4.2. Benchmark results discussion",
+        "Section 4.3. Noun and Verb clustering experiment"
+    ]
+}

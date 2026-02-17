@@ -1,0 +1,26 @@
+{
+    "layout_template": "two_col_fig_right",
+    "background_color": "#FFFFFF",
+    "layout_regions": {
+        "title": {
+            "x": 0.05,
+            "y": 0.05,
+            "w": 0.9,
+            "h": 0.1
+        },
+        "bullets": {
+            "x": 0.05,
+            "y": 0.2,
+            "w": 0.35,
+            "h": 0.7
+        },
+        "figure": {
+            "x": 0.45,
+            "y": 0.2,
+            "w": 0.5,
+            "h": 0.7
+        }
+    },
+    "has_figure": true,
+    "style_rationale": "The slide outlines technical challenges (camera motion, class imbalance, fine-grained actions). A two-column layout with bullets on the left and a composite figure on the right (showing actions and imbalance distribution) effectively pairs the conceptual problems with visual evidence, following the recommended style for motivation and problem-statement content."
+}

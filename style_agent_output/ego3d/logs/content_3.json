@@ -1,0 +1,27 @@
+{
+    "extracted_content": "The IKEA Ego 3D dataset presents several unique challenges for action recognition. First, the ego-view perspective introduces significant camera motion, causing points to appear and disappear within frames, which is more complex than static sensor data. Second, the dataset contains three distinct types of point motion: action-related, noise-related, and camera-related, which are difficult to decouple. Third, there is a high degree of class imbalance, as shown in the action occurrence distribution, where some actions like 'spin leg' are frequent and long, while others like 'spin drawer knob' are short and rare. Finally, the fine-grained nature of the actions (verb-noun pairs) means that many classes are visually similar (e.g., different types of screws) but contextually distinct, requiring high-resolution ego-view data to discriminate small components.",
+    "key_figures": [
+        {
+            "ref": "Figure 2",
+            "caption": "IKEA Ego3D Furniture. The assemblies in the IKEA Ego3D dataset include the (a) LACK Side table, (b) LACK TV bench, (c) KALLAX Drawer, and BEKVAM (d) Stepping stool.",
+            "relevance": "Visualizes the diversity of furniture types included in the dataset, supporting the claim of varied assembly tasks."
+        },
+        {
+            "ref": "Figure 3",
+            "caption": "IKEA Ego 3D Dataset actions. Visualizing the RGB image (top), 3D point cloud (middle), and action label (bottom) for the Drawer (a-d) and Stool (e-h) assemblies.",
+            "relevance": "Demonstrates the complexity and fine-grained nature of the actions, showing the alignment between RGB and 3D point cloud modalities."
+        },
+        {
+            "ref": "Figure 4",
+            "caption": "IKEA Ego 3D dataset action occurrence. A highly imbalanced dataset provides a challenge for learning-based algorithms. Note the y-axis is log scaled, therefore a small gap in this axis reflects a significant gap in proportions.",
+            "relevance": "Provides quantitative evidence of the significant class imbalance challenge inherent in the dataset."
+        }
+    ],
+    "key_tables": [],
+    "key_equations": [],
+    "section_refs": [
+        "Section 3.1",
+        "Section 3.3",
+        "Section 3.5"
+    ]
+}
