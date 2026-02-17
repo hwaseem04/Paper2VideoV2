@@ -579,71 +579,152 @@ class Preacher:
         return success, eval_results
     
     def low_planning(self, part_plan):
-        plan_file = self.log_dir/f"file_{self.scene_idx}.json"
-        # Check if plan file already exists - if so, load and skip planning
+        """Orchestrate the 4-stage low-level planning pipeline."""
+        plan_file = self.log_dir / f"file_{self.scene_idx}.json"
+        
+        # Check if final plan already cached
         if os.path.exists(plan_file):
-            self.workflow_logger.info(f"Scene {self.scene_idx}: Low plan already exists at {plan_file}. Skipping generation.")
+            self.workflow_logger.info(f"Scene {self.scene_idx}: Low plan already exists at {plan_file}. Skipping.")
             with open(plan_file, "r") as file:
                 self.final_plan[self.scene_idx] = json.load(file)
                 return None
         
-        self.workflow_logger.info(f"Scene {self.scene_idx}: No cached plan found. Generating low-level plan...")
-        # Initialize with high-level info
+        self.workflow_logger.info(f"Scene {self.scene_idx}: Starting 4-stage low-level planning...")
         self.final_plan[self.scene_idx] = part_plan.copy()
         
-        style_advice = self.retrieve_scene_style(part_plan)
-        eval_results = None
-        low_plan_str = None
-        
-        if self.with_reflection:
-            low_planning_success = False
-            iter = 0
-            while not low_planning_success and iter < self.max_low_plan_iteration:
-                low_plan_str = self.low_plan_by_llm(part_plan, style_advice, eval_results, low_plan_str)
-                parsed_low_plan = _load_json_dict(low_plan_str)
-                if parsed_low_plan and isinstance(parsed_low_plan, dict):
-                    low_planning_success, eval_results = self.low_evaluate_by_llm(low_plan_str)
-                else:
-                    eval_results = f"Output was not valid JSON. Please output ONLY valid JSON, no markdown fences."
-                iter += 1
+        # ── Stage 1: Content Extraction ──
+        content_file = self.log_dir / f"content_{self.scene_idx}.json"
+        if os.path.exists(content_file):
+            self.workflow_logger.info(f"  Stage 1: Content already cached. Loading.")
+            with open(content_file, "r") as f:
+                content_summary = json.load(f)
         else:
-            low_plan_str = self.low_plan_by_llm(part_plan, style_advice)
+            self.workflow_logger.info(f"  Stage 1: Extracting content from paper...")
+            content_summary = self.content_extract_by_llm(part_plan)
+            with open(content_file, "w") as f:
+                json.dump(content_summary, f, indent=4)
         
-        # Parse and merge final result
-        parsed_low_plan = _load_json_dict(low_plan_str)
-        if parsed_low_plan and isinstance(parsed_low_plan, dict):
-            self.final_plan[self.scene_idx].update(parsed_low_plan)
+        # ── Stage 2: Style Planning ──
+        style_file = self.log_dir / f"style_{self.scene_idx}.json"
+        if os.path.exists(style_file):
+            self.workflow_logger.info(f"  Stage 2: Style plan already cached. Loading.")
+            with open(style_file, "r") as f:
+                style_plan = json.load(f)
         else:
-            raise ValueError(f"Failed to parse low plan for scene {self.scene_idx} after all attempts. Raw output: {low_plan_str[:200]}")
+            self.workflow_logger.info(f"  Stage 2: Planning style and layout...")
+            # TODO: Replace with section-level retrieval from top-k papers
+            style_advice = self.retrieve_scene_style(part_plan)
+            style_plan = self.style_plan_by_llm(part_plan, content_summary, style_advice)
+            with open(style_file, "w") as f:
+                json.dump(style_plan, f, indent=4)
         
-        # Save the complete plan
+        # ── Stage 3: Low-Level Content Drafting ──
+        self.workflow_logger.info(f"  Stage 3: Drafting content (bullets, audio, figures)...")
+        content_draft = self.low_plan_by_llm(part_plan, content_summary, style_plan)
+        
+        # ── Stage 4: Style Refinement (assign content to builds) ──
+        self.workflow_logger.info(f"  Stage 4: Assigning content to builds...")
+        final_refined = self.style_refine_by_llm(content_draft, style_plan)
+        
+        # ── Merge everything into final plan ──
+        merged_plan = part_plan.copy()
+        merged_plan["extracted_content"] = content_summary.get("extracted_content", "")
+        merged_plan["layout"] = {
+            "template": style_plan.get("layout_template", "one_col_bullets"),
+            "background_color": style_plan.get("background_color", "#FFFFFF"),
+            "regions": style_plan.get("layout_regions", {}),
+        }
+        # Merge refined output (elements, builds, style, audio_content, etc.)
+        merged_plan.update(final_refined)
+        # Add source and time_cost from content draft
+        merged_plan["source"] = content_draft.get("source", [])
+        merged_plan["time_cost"] = content_draft.get("time_cost", str(part_plan.get("time_allocation_sec", 8)))
+        merged_plan["audio_content"] = content_draft.get("audio_content", "")
+        merged_plan["prompt"] = content_draft.get("prompt", "")
+        
+        self.final_plan[self.scene_idx] = merged_plan
+        
+        # Save final plan
         with open(plan_file, "w") as file:
             json.dump(self.final_plan[self.scene_idx], file, indent=4)
+        self.workflow_logger.info(f"  Scene {self.scene_idx}: All 4 stages complete. Saved to {plan_file}")
     
-    def low_plan_by_llm(self, part_plan, style_advice, eval_results=None, low_plan_str=None) -> str:
-        if eval_results:
-            prompt = low_plan_str + ' \n ' + prompts.low_level_replanning_prompt + eval_results + ' \n ' + style_advice
-        else:
-            try:
-                prompt = prompts.low_level_planning_prompt.format(
-                    scene_json=json.dumps(part_plan, indent=2), 
-                    style_advice=style_advice
-                )
-            except Exception as e:
-                self.workflow_logger.warning(f"Prompt formatting failed: {e}")
-                prompt = prompts.low_level_planning_prompt + "\nInput: " + str(part_plan)
-
-            if self.with_example:
-                prompt += ' \n ' + merge_dict_keys_values(self.low_example)
-             
-        low_plan = eval(
-            self.planner(
-                prompt=prompt,
-                pdf_path=Path(self.pdf_path),
-            )
+    # ── Individual stage methods ──
+    
+    def content_extract_by_llm(self, part_plan) -> dict:
+        """Stage 1: Extract relevant content from the paper for this scene."""
+        prompt = prompts.content_extraction_prompt.format(
+            scene_json=json.dumps(part_plan, indent=2)
         )
-        self.workflow_logger.info(f"Low_plan scene {self.scene_idx}: {low_plan}")
-        return low_plan
+        raw = eval(self.planner(
+            prompt=prompt,
+            pdf_path=Path(self.pdf_path),
+        ))
+        self.workflow_logger.info(f"  Content extraction scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
+        
+        parsed = _load_json_dict(raw)
+        if not parsed or not isinstance(parsed, dict):
+            raise ValueError(f"Content extraction failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
+        return parsed
+    
+    def style_plan_by_llm(self, part_plan, content_summary, style_advice) -> dict:
+        """Stage 2: Decide layout and build skeleton using content + reference styles."""
+        prompt = prompts.style_planning_prompt.format(
+            content_summary=json.dumps(content_summary, indent=2),
+            scene_context=json.dumps(part_plan, indent=2),
+            style_advice=style_advice,
+        )
+        raw = eval(self.planner(
+            prompt=prompt,
+            pdf_path=Path(self.pdf_path),
+        ))
+        self.workflow_logger.info(f"  Style plan scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
+        
+        parsed = _load_json_dict(raw)
+        if not parsed or not isinstance(parsed, dict):
+            raise ValueError(f"Style planning failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
+        return parsed
+    
+    def low_plan_by_llm(self, part_plan, content_summary, style_plan) -> dict:
+        """Stage 3: Draft content (bullets, audio, figures) within the decided layout."""
+        prompt = prompts.low_level_planning_prompt.format(
+            content_summary=json.dumps(content_summary, indent=2),
+            style_plan=json.dumps(style_plan, indent=2),
+            scene_context=json.dumps(part_plan, indent=2),
+        )
+        raw = eval(self.planner(
+            prompt=prompt,
+            pdf_path=Path(self.pdf_path),
+        ))
+        self.workflow_logger.info(f"  Content draft scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
+        
+        parsed = _load_json_dict(raw)
+        if not parsed or not isinstance(parsed, dict):
+            raise ValueError(f"Content drafting failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
+        return parsed
+    
+    def style_refine_by_llm(self, content_draft, style_plan) -> dict:
+        """Stage 4: Decide builds from scratch, assign drafted content to build steps."""
+        time_cost = content_draft.get("time_cost", "8")
+        prompt = prompts.style_refinement_prompt.format(
+            content_draft=json.dumps(content_draft, indent=2),
+            layout_info=json.dumps({
+                "layout_template": style_plan.get("layout_template", ""),
+                "layout_regions": style_plan.get("layout_regions", {}),
+                "has_figure": style_plan.get("has_figure", False),
+                "total_time_sec": time_cost,
+            }, indent=2),
+        )
+        raw = eval(self.planner(
+            prompt=prompt,
+            pdf_path=Path(self.pdf_path),
+        ))
+        self.workflow_logger.info(f"  Style refinement scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
+        
+        parsed = _load_json_dict(raw)
+        if not parsed or not isinstance(parsed, dict):
+            raise ValueError(f"Style refinement failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
+        return parsed
     
     def low_evaluate_by_llm(self, low_plan_str) -> tuple:
         prompt = prompts.low_level_evaluate_prompt + ' \n ' + low_plan_str
