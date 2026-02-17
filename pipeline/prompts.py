@@ -14,6 +14,7 @@ Requirements:
 4. Maintain high technical accuracy and professionalism.
 5. Allow 5 to 10 seconds of video per scene.
 6. Deliver only core content; omit acknowledgements and references.
+7. Do NOT create a title/introduction scene. Scene 0 (title page with paper title, authors, logos) is auto-generated separately. Start your scenes from the paper's technical content.
 
 You MUST output the scenes in the following STRICT JSON format (list of objects):
 ```json
@@ -25,12 +26,6 @@ You MUST output the scenes in the following STRICT JSON format (list of objects)
     "paper_section": "Introduction/Method/etc",
     "narrative_role": "problem/solution/result/etc",
     "time_allocation_sec": 5,
-    "target_layout": "two_col_fig_left/full_fig_with_callouts/etc",
-    "text_density": "low/medium/high",
-    "visual_density": "medium/high",
-    "uses_builds": true,
-    "expected_build_steps": 2,
-    "primary_sources": ["Figure 1", "Section 1"],
     "reference_style_examples": []
   }},
   ...
@@ -96,6 +91,8 @@ Read the paper carefully and extract ALL relevant content from the section(s) re
 ### Stage 2: Style Planning (Layout Only)
 ### ─────────────────────────────────────────────────
 
+# scene_context might not be needed i think
+# syle advice should be the section wise retrieval
 style_planning_prompt = """
 You are an expert presentation designer for academic video summaries.
 
@@ -295,3 +292,81 @@ pro_vis_rege = "The code you write has the following issues, please output the u
 gen_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") to determine if the current video meets the requirements while maintaining structural integrity. If the answer is \"NO,\" please provide a reason:  Does it convey serious subject matter? Is the image filled with vivid scenes rather than meaningless numbers, letters, and symbols? Is the image strongly relevant to the following description?"
 
 slides_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") . Is the following text works well as a caption beneath an image in a PowerPoint slide?  Is the following text explaining the image? Following text:"
+
+### ─────────────────────────────────────────────────
+### Title Page Prompts
+### ─────────────────────────────────────────────────
+
+title_extraction_prompt = """You are an expert at reading academic papers.
+
+Look at the FIRST PAGE of this paper and extract the following metadata:
+
+## OUTPUT FORMAT — Return ONLY valid JSON:
+
+{{
+  "paper_title": "The full paper title exactly as written",
+  "authors": [
+    {{"name": "First Author", "affiliation_id": 1}},
+    {{"name": "Second Author", "affiliation_id": 2}}
+  ],
+  "affiliations": [
+    {{"id": 1, "name": "University or Organization Name", "email_domain": "example.edu"}},
+    {{"id": 2, "name": "Company Name", "email_domain": "company.com"}}
+  ],
+  "venue": "Conference or Journal Name and Year (e.g. CVPR 2025)"
+}}
+
+## STRICT RULES:
+1. Extract the paper title EXACTLY as it appears — do not paraphrase.
+2. List ALL authors in order. Use their full names as written.
+3. Each author must have an affiliation_id matching one entry in the affiliations list.
+4. For affiliations, extract the email domain from author emails if available (e.g. user@nvidia.com → nvidia.com).
+5. If no email is visible, leave email_domain as an empty string.
+6. For venue, look for conference/journal name (e.g. "CVPR 2025", "NeurIPS 2024", "ICLR 2025"). If not found, use empty string.
+7. Output ONLY valid JSON, no markdown fences, no explanation.
+"""
+
+title_style_prompt = """You are an expert presentation designer for academic video summaries.
+
+You are designing the TITLE PAGE layout for a paper presentation video.
+
+Paper metadata:
+{metadata_json}
+
+Available logos:
+{available_logos}
+
+Design a visually clean, professional title page layout. Use the reference style of academic presentation title slides:
+- Conference logo in a top corner
+- Affiliation logos grouped together (top row or below authors)
+- Paper title large and centered
+- Authors centered below title
+- Affiliation text small, centered
+- Venue name at bottom
+
+IMPORTANT: Vary the placement naturally — do NOT always put logos in the same position. Sometimes conference logo goes top-left, sometimes top-right. Sometimes affiliation logos go in the top row, sometimes below authors. Be creative but professional.
+
+## OUTPUT FORMAT — Return ONLY valid JSON:
+
+{{
+  "layout_template": "title_page",
+  "background_color": "#FFFFFF",
+  "layout_regions": {{
+    "conference_logo": {{"x": 0.0, "y": 0.0, "w": 0.15, "h": 0.12}},
+    "affiliation_logos": {{"x": 0.5, "y": 0.0, "w": 0.45, "h": 0.12}},
+    "title": {{"x": 0.05, "y": 0.25, "w": 0.9, "h": 0.25}},
+    "authors": {{"x": 0.1, "y": 0.55, "w": 0.8, "h": 0.12}},
+    "affiliations": {{"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.08}},
+    "venue": {{"x": 0.3, "y": 0.82, "w": 0.4, "h": 0.06}}
+  }},
+  "style_rationale": "Brief explanation of why this positioning works."
+}}
+
+## STRICT RULES:
+1. All x/y/w/h values must be normalized (0.0 to 1.0). Regions must not overlap.
+2. If no conference logo is available, omit the conference_logo region.
+3. If no affiliation logos are available, omit the affiliation_logos region.
+4. The title region should be generous — wide enough for long titles to wrap.
+5. Keep at least 5% margin from all edges.
+6. Output ONLY valid JSON, no markdown fences, no explanation.
+"""

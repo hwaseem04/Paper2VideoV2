@@ -22,6 +22,7 @@ from utils.misc import download_file, name_to_pdb_ids, download_pdb
 from utils.mol import generate_mol_animation
 from tools.retriever import PaperRetriever
 from tools.renderer import SlideRenderer
+from tools.logo_manager import resolve_logos, format_authors_display, format_affiliations_display, format_authors_with_superscripts
 import random
 import json
 
@@ -469,6 +470,16 @@ class Preacher:
 
         self.workflow_logger.info(f"Parsed {len(self.high_plan_list)} scenes from high plan.")
 
+        # 2b. Build and prepend title scene
+        self.workflow_logger.info("=" * 50)
+        self.workflow_logger.info("Step 2b: Building title page scene...")
+        self.workflow_logger.info("=" * 50)
+
+        title_metadata = self.extract_title_metadata()
+        title_scene = self.build_title_scene(title_metadata)
+        self.high_plan_list.insert(0, title_scene)
+        self.workflow_logger.info(f"Title scene prepended. Total scenes: {len(self.high_plan_list)}")
+
         # 3. Low Planning
         self.workflow_logger.info("=" * 50)
         self.workflow_logger.info("Step 3: Low-level planning...")
@@ -517,6 +528,174 @@ class Preacher:
         concatenate_videos(self.video_list, self.final_video_path_)
         self.workflow_logger.info(f"Final video saved at {self.final_video_path_}")
 
+
+    def extract_title_metadata(self) -> dict:
+        """Extract title, authors, affiliations, venue from the PDF's first page."""
+        cache_path = self.log_dir / "title_metadata.json"
+        
+        if cache_path.exists():
+            self.workflow_logger.info(f"Title metadata already cached at {cache_path}. Loading.")
+            with open(cache_path, "r") as f:
+                return json.load(f)
+        
+        self.workflow_logger.info("Extracting title metadata from PDF...")
+        prompt = prompts.title_extraction_prompt
+        raw = eval(self.planner(
+            prompt=prompt,
+            pdf_path=Path(self.pdf_path),
+        ))
+        self.workflow_logger.info(f"Title metadata raw: {str(raw)[:300]}")
+        
+        parsed = _load_json_dict(raw)
+        if not parsed or not isinstance(parsed, dict):
+            # Fallback: minimal metadata
+            self.workflow_logger.warning(f"Title metadata extraction failed. Using fallback.")
+            parsed = {
+                "paper_title": self.input_path.stem.replace("_", " ").replace("-", " ").title(),
+                "authors": [],
+                "affiliations": [],
+                "venue": "",
+            }
+        
+        with open(cache_path, "w") as f:
+            json.dump(parsed, f, indent=4)
+        return parsed
+    
+    def build_title_scene(self, metadata: dict) -> dict:
+        """Build a fully-specified title scene plan from extracted metadata."""
+        authors = metadata.get("authors", [])
+        affiliations = metadata.get("affiliations", [])
+        venue = metadata.get("venue", "")
+        paper_title = metadata.get("paper_title", "Untitled Paper")
+        
+        # --- Resolve logos ---
+        logos = resolve_logos(
+            pdf_path=self.input_path,
+            affiliations=affiliations,
+            venue=venue,
+        )
+        
+        # Build available_logos description for the style prompt
+        available_logos_desc = []
+        if logos.get("conference"):
+            available_logos_desc.append(f"conference_logo: {logos['conference'].name}")
+        for i, aff_logo in enumerate(logos.get("affiliations", [])):
+            if aff_logo:
+                aff_name = affiliations[i].get("name", f"Affiliation {i+1}") if i < len(affiliations) else f"Affiliation {i+1}"
+                available_logos_desc.append(f"affiliation_{i+1}_logo: {aff_logo.name} ({aff_name})")
+        
+        if not available_logos_desc:
+            available_logos_str = "No logos available."
+        else:
+            available_logos_str = "\n".join(available_logos_desc)
+        
+        # --- LLM decides layout ---
+        style_prompt = prompts.title_style_prompt.format(
+            metadata_json=json.dumps(metadata, indent=2),
+            available_logos=available_logos_str,
+        )
+        raw = eval(self.planner(
+            prompt=style_prompt,
+            pdf_path=Path(self.pdf_path),
+        ))
+        self.workflow_logger.info(f"Title style layout: {str(raw)[:300]}")
+        
+        style_plan = _load_json_dict(raw)
+        if not style_plan or not isinstance(style_plan, dict):
+            # Fallback layout
+            self.workflow_logger.warning("Title style planning failed. Using default layout.")
+            style_plan = {
+                "layout_template": "title_page",
+                "background_color": "#FFFFFF",
+                "layout_regions": {
+                    "conference_logo": {"x": 0.03, "y": 0.03, "w": 0.15, "h": 0.12},
+                    "affiliation_logos": {"x": 0.55, "y": 0.03, "w": 0.42, "h": 0.12},
+                    "title": {"x": 0.05, "y": 0.25, "w": 0.9, "h": 0.25},
+                    "authors": {"x": 0.1, "y": 0.55, "w": 0.8, "h": 0.12},
+                    "affiliations": {"x": 0.1, "y": 0.72, "w": 0.8, "h": 0.08},
+                    "venue": {"x": 0.3, "y": 0.82, "w": 0.4, "h": 0.06},
+                },
+            }
+        
+        # --- Format display strings ---
+        authors_display = format_authors_with_superscripts(authors)
+        affiliations_display = format_affiliations_display(authors, affiliations)
+        
+        # --- Build elements ---
+        elements = {
+            "title": paper_title,
+            "authors": authors_display,
+            "affiliations": affiliations_display,
+            "venue": venue,
+        }
+        
+        # Add logo paths to elements
+        if logos.get("conference"):
+            elements["conference_logo"] = {"type": "logo", "path": str(logos["conference"])}
+        
+        aff_logos_list = []
+        for logo_path in logos.get("affiliations", []):
+            if logo_path:
+                aff_logos_list.append({"type": "logo", "path": str(logo_path)})
+        if aff_logos_list:
+            elements["affiliation_logos"] = aff_logos_list
+        
+        # --- Audio ---
+        # Short intro narration
+        if authors:
+            first_author = authors[0].get("name", "the authors")
+            if len(authors) > 1:
+                audio = f"This paper, titled {paper_title}, is by {first_author} and colleagues."
+            else:
+                audio = f"This paper, titled {paper_title}, is by {first_author}."
+        else:
+            audio = f"This paper is titled {paper_title}."
+        if venue:
+            audio += f" Presented at {venue}."
+        
+        # --- Assemble scene plan ---
+        regions = style_plan.get("layout_regions", {})
+        
+        # Remove logo regions if no logos available
+        if not logos.get("conference") and "conference_logo" in regions:
+            del regions["conference_logo"]
+        if not aff_logos_list and "affiliation_logos" in regions:
+            del regions["affiliation_logos"]
+        
+        scene = {
+            "scene_id": 0,
+            "title": paper_title,
+            "summary": f"Title page for: {paper_title}",
+            "paper_section": "Title",
+            "narrative_role": "title",
+            "time_allocation_sec": 5,
+            "style": "Slides",
+            "layout": {
+                "template": "title_page",
+                "background_color": style_plan.get("background_color", "#FFFFFF"),
+                "regions": regions,
+            },
+            "elements": elements,
+            "builds": [
+                {
+                    "step_index": 0,
+                    "time_offset_sec": 0.0,
+                    "actions": [{"type": "show", "target": "all"}],
+                    "audio_segment": audio,
+                }
+            ],
+            "expected_build_steps": 1,
+            "time_cost": "5",
+            "audio_content": audio,
+            "prompt": f"Title page showing paper title, authors, and logos for: {paper_title}",
+        }
+        
+        # Cache title scene
+        with open(self.log_dir / "title_scene.json", "w") as f:
+            json.dump(scene, f, indent=4)
+        
+        self.workflow_logger.info(f"Title scene built: {paper_title}")
+        return scene
 
     def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
@@ -588,6 +767,14 @@ class Preacher:
             with open(plan_file, "r") as file:
                 self.final_plan[self.scene_idx] = json.load(file)
                 return None
+        
+        # Title scenes skip the 4-stage pipeline — they are already fully specified
+        if part_plan.get("narrative_role") == "title":
+            self.workflow_logger.info(f"Scene {self.scene_idx}: Title scene — skipping 4-stage pipeline.")
+            self.final_plan[self.scene_idx] = part_plan.copy()
+            with open(plan_file, "w") as file:
+                json.dump(self.final_plan[self.scene_idx], file, indent=4)
+            return None
         
         self.workflow_logger.info(f"Scene {self.scene_idx}: Starting 4-stage low-level planning...")
         self.final_plan[self.scene_idx] = part_plan.copy()

@@ -25,6 +25,11 @@ class SlideRenderer:
         # Load fonts (fallback to default if necessary)
         self.title_font = self._load_font("Arial Bold.ttf", self.TITLE_FONT_SIZE)
         self.body_font = self._load_font("Arial.ttf", self.BODY_FONT_SIZE)
+        # Title page fonts
+        self.title_page_font = self._load_font("Arial Bold.ttf", 64)
+        self.author_font = self._load_font("Arial.ttf", 36)
+        self.affiliation_font = self._load_font("Arial.ttf", 28)
+        self.venue_font = self._load_font("Arial Bold.ttf", 32)
 
     def _load_font(self, name, size):
         try:
@@ -89,8 +94,13 @@ class SlideRenderer:
 
         clips = []
         
-        # Base image state
-        current_img = self._create_base_slide(layout, elements)
+        # Check if this is a title page
+        template = layout.get("template", "")
+        if template == "title_page":
+            current_img = self._render_title_page(elements, layout)
+        else:
+            # Base image state
+            current_img = self._create_base_slide(layout, elements)
         
         # Track all visible bullets across builds to prevent overlap
         all_visible_bullets = set()
@@ -158,6 +168,148 @@ class SlideRenderer:
         # So base slide is just background.
         
         return img
+
+    def _render_title_page(self, elements, layout):
+        """Render a title page with paper title, authors, affiliations, venue, and logos."""
+        bg_color = layout.get("background_color", "#FFFFFF")
+        img = Image.new('RGB', (self.W, self.H), bg_color)
+        draw = ImageDraw.Draw(img)
+        regions = layout.get("regions", {})
+        
+        # --- Draw paper title (with text wrapping) ---
+        title_text = elements.get("title", "")
+        if title_text and "title" in regions:
+            title_region = regions["title"]
+            tx, ty, tw, th = self._to_px(title_region)
+            
+            # Wrap title text to fit region width
+            lines = self._wrap_text(title_text, tw, self.title_page_font)
+            line_height = self.title_page_font.getbbox("Ay")[3] + 8
+            
+            # Center vertically within region
+            total_text_height = len(lines) * line_height
+            start_y = ty + max(0, (th - total_text_height) // 2)
+            
+            for line in lines:
+                line_bbox = self.title_page_font.getbbox(line)
+                line_w = line_bbox[2] - line_bbox[0]
+                line_x = tx + (tw - line_w) // 2  # Center each line
+                draw.text((line_x, start_y), line, fill="black", font=self.title_page_font)
+                start_y += line_height
+        
+        # --- Draw authors ---
+        authors_text = elements.get("authors", "")
+        if authors_text and "authors" in regions:
+            authors_region = regions["authors"]
+            ax, ay, aw, ah = self._to_px(authors_region)
+            
+            # Wrap if too wide
+            lines = self._wrap_text(authors_text, aw, self.author_font)
+            line_height = self.author_font.getbbox("Ay")[3] + 6
+            total_h = len(lines) * line_height
+            start_y = ay + max(0, (ah - total_h) // 2)
+            
+            for line in lines:
+                line_bbox = self.author_font.getbbox(line)
+                line_w = line_bbox[2] - line_bbox[0]
+                line_x = ax + (aw - line_w) // 2
+                draw.text((line_x, start_y), line, fill=(60, 60, 60), font=self.author_font)
+                start_y += line_height
+        
+        # --- Draw affiliations ---
+        aff_text = elements.get("affiliations", "")
+        if aff_text and "affiliations" in regions:
+            aff_region = regions["affiliations"]
+            fx, fy, fw, fh = self._to_px(aff_region)
+            
+            aff_bbox = self.affiliation_font.getbbox(aff_text)
+            aff_w = aff_bbox[2] - aff_bbox[0]
+            aff_x = fx + (fw - aff_w) // 2
+            aff_y = fy + (fh - (aff_bbox[3] - aff_bbox[1])) // 2
+            draw.text((aff_x, aff_y), aff_text, fill=(100, 100, 100), font=self.affiliation_font)
+        
+        # --- Draw venue ---
+        venue_text = elements.get("venue", "")
+        if venue_text and "venue" in regions:
+            venue_region = regions["venue"]
+            vx, vy, vw, vh = self._to_px(venue_region)
+            
+            venue_bbox = self.venue_font.getbbox(venue_text)
+            venue_w = venue_bbox[2] - venue_bbox[0]
+            venue_x = vx + (vw - venue_w) // 2
+            venue_y = vy + (vh - (venue_bbox[3] - venue_bbox[1])) // 2
+            draw.text((venue_x, venue_y), venue_text, fill=(40, 40, 40), font=self.venue_font)
+        
+        # --- Place conference logo ---
+        conf_logo = elements.get("conference_logo")
+        if conf_logo and isinstance(conf_logo, dict) and "conference_logo" in regions:
+            self._place_logo(img, conf_logo.get("path", ""), regions["conference_logo"])
+        
+        # --- Place affiliation logos ---
+        aff_logos = elements.get("affiliation_logos", [])
+        if aff_logos and isinstance(aff_logos, list) and "affiliation_logos" in regions:
+            aff_region = regions["affiliation_logos"]
+            rx, ry, rw, rh = self._to_px(aff_region)
+            
+            # Space logos evenly across the region
+            n_logos = len(aff_logos)
+            if n_logos > 0:
+                slot_w = rw // n_logos
+                for i, logo_info in enumerate(aff_logos):
+                    if isinstance(logo_info, dict):
+                        logo_path = logo_info.get("path", "")
+                    else:
+                        logo_path = str(logo_info)
+                    
+                    # Create a sub-region for this logo
+                    sub_region = {
+                        "x": aff_region["x"] + (i * aff_region["w"] / n_logos),
+                        "y": aff_region["y"],
+                        "w": aff_region["w"] / n_logos,
+                        "h": aff_region["h"],
+                    }
+                    self._place_logo(img, logo_path, sub_region)
+        
+        return img
+    
+    def _place_logo(self, img, logo_path, region):
+        """Place a logo image into the given region, preserving aspect ratio."""
+        if not logo_path or not Path(logo_path).exists():
+            return
+        
+        try:
+            logo = Image.open(logo_path)
+            # Convert to RGBA if needed
+            if logo.mode != 'RGBA':
+                logo = logo.convert('RGBA')
+            
+            rx, ry, rw, rh = self._to_px(region)
+            
+            # Scale logo to fit region while preserving aspect ratio
+            logo_ratio = logo.width / logo.height
+            region_ratio = rw / rh
+            
+            if logo_ratio > region_ratio:
+                new_w = int(rw * 0.9)  # 90% of region width
+                new_h = int(new_w / logo_ratio)
+            else:
+                new_h = int(rh * 0.9)
+                new_w = int(new_h * logo_ratio)
+            
+            if new_w < 1 or new_h < 1:
+                return
+            
+            logo = logo.resize((new_w, new_h), Image.LANCZOS)
+            
+            # Center in region
+            paste_x = rx + (rw - new_w) // 2
+            paste_y = ry + (rh - new_h) // 2
+            
+            # Paste with transparency
+            img.paste(logo, (paste_x, paste_y), logo if logo.mode == 'RGBA' else None)
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to place logo {logo_path}: {e}")
 
     def _apply_build_actions(self, img, actions, elements, layout, cumulative_visible_bullets=None):
         new_img = img.copy()
