@@ -96,22 +96,14 @@ Describe the following aspects in natural language (NO coordinates, only descrip
 
 6. **Text Density**: Light, moderate, or dense
 
-7. **Slide Section**: Classify this slide into one of these academic presentation sections:
-   - "title" (paper title, authors, affiliations)
-   - "outline" (table of contents, agenda)
-   - "introduction" (problem statement, context)
-   - "motivation" (why this work matters)
-   - "background" (related work, prior art)
-   - "methods" (approach, architecture, algorithm)
-   - "data" (datasets, benchmarks)
-   - "results" (quantitative results, tables, charts)
-   - "comparison" (comparing with baselines/SOTAs)
-   - "ablation" (ablation studies, analysis)
-   - "qualitative" (qualitative examples, visualizations)
-   - "conclusion" (summary, takeaways, future work)
-   - "references" (bibliography)
-   - "blank" (empty/transition slide)
-   - "other" (doesn't fit above categories)
+7. **Slide Section**: Classify this slide into exactly one of these standard academic categories:
+   - "title": Presentation title slide (paper title, authors).
+   - "introduction": Introduction, motivation, problem statement, or background context.
+   - "method": Methodology, approach, proposed method, architecture, or foundational related work.
+   - "experiments": Experimental setup, datasets, implementation details, or benchmarks.
+   - "results": Quantitative results, qualitative findings, analysis, discussion, or tables/charts.
+   - "conclusion": Conclusion, future work, limitations, or summary.
+   - "other": Anything that doesn't fit the above (e.g., Q&A, extra references).
 
 Respond in exactly this JSON format:
 ```json
@@ -127,7 +119,7 @@ Respond in exactly this JSON format:
         self,
         config_path: Path = Path("config.yml"),
         logger: Optional[logging.Logger] = None,
-        max_retries: int = 5,
+        max_retries: int = 2,
         initial_delay: float = 2.0
     ):
         self.logger = logger or get_logger("GeminiFrameComparator")
@@ -142,6 +134,7 @@ Respond in exactly this JSON format:
         with open(config_path, "r") as f:
             cfg = yaml.safe_load(f)
 
+        # self.api_key = "***REMOVED***"
         self.api_key = cfg["GEMINI"]["API_KEY"]
         self.model_name = cfg["GEMINI"]["MODEL"]
         self.temperature = cfg["GEMINI"].get("TEMPERATURE", 0.0)
@@ -228,10 +221,7 @@ Respond in exactly this JSON format:
             delay *= 2
 
         self.logger.error("All retries exhausted for Gemini query")
-        # Return safe defaults
-        if parse_json:
-            return {"same_slide": True, "confidence": 0.0, "reason": "API failure - defaulting to same slide"}
-        return {"text": ""}
+        raise RuntimeError("Gemini API retries exhausted (check for JSON truncation or rate limits)")
 
     def compare_frames(
         self,
@@ -294,8 +284,12 @@ Respond in exactly this JSON format:
 Your task: Assign a **slide number** and **build number** to each frame.
 
 **Rules:**
-1. **SAME SLIDE, SAME BUILD**: Visually identical or near-identical frames (no visible change). Same slide_number, same build_number.
-2. **SAME SLIDE, NEW BUILD**: Same title/heading, but new content appears (bullet points, figures animating in, video playing within slide, text highlights). Same slide_number, increment build_number.
+1. **SAME SLIDE, SAME BUILD**: Visually identical or near-identical frames (no informative change). Same slide_number, same build_number. Also applies to video playback where the overall content is the same.
+2. **SAME SLIDE, NEW BUILD**: Same title/heading, but **meaningful new content** is added:
+   - New bullet points or lines of text appearing.
+   - New arrows, boxes, or annotations explaining concepts.
+   - Significant new figures or images being added.
+   - **CRITICAL**: Do NOT increment build_number for simple video/animation playback or highlighting unless it introduces new explanatory text/elements.
 3. **NEW SLIDE**: Title changes, complete layout restructuring, topic transition. Increment slide_number, reset build_number to 0.
 4. **BLANK/TRANSITION**: A mostly black/blank frame gets slide_number 0, build_number 0 (will be filtered out).
 5. Slide numbers should start from 1 and increase sequentially.
