@@ -7,7 +7,7 @@ import json
 import ast
 
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorDevice, AcceleratorOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from typing import Any, Dict, List, Union
@@ -24,18 +24,32 @@ except ImportError:
 
 JSONType = Union[Dict[str, Any], List[Any]]
 
-def read_pdf(pdf):
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.images_scale = 5.0
-    pipeline_options.generate_page_images = True
-    pipeline_options.generate_picture_images = True
+_CONVERTER = None
+_CONVERSION_CACHE = {}
 
-    doc_converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
-    )
-    raw_result = doc_converter.convert(pdf)
+def read_pdf(pdf):
+    global _CONVERTER
+    pdf_key = str(pdf)
+    
+    if pdf_key in _CONVERSION_CACHE:
+        raw_result = _CONVERSION_CACHE[pdf_key]
+    else:
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.accelerator_options.device = AcceleratorDevice.CPU
+        pipeline_options.do_ocr = False
+        pipeline_options.images_scale = 5.0
+        pipeline_options.generate_page_images = True
+        pipeline_options.generate_picture_images = True
+
+        if _CONVERTER is None:
+            _CONVERTER = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                }
+            )
+        
+        raw_result = _CONVERTER.convert(pdf)
+        _CONVERSION_CACHE[pdf_key] = raw_result
 
     raw_markdown = raw_result.document.export_to_markdown()
     text_content = re.compile(r"<!--[\s\S]*?-->").sub("", raw_markdown)
@@ -275,7 +289,6 @@ def _extract_json_candidates(raw: str) -> List[str]:
     candidates.append(raw.strip())
     return candidates
 
-import ast
 def _load_json_dict(raw: str) -> JSONType:
     """
     compatible with 3 conditions：
@@ -285,7 +298,14 @@ def _load_json_dict(raw: str) -> JSONType:
     """
     # 1. extract everything from  ```json ... ``` or ``` ... ``` 
     m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, flags=re.I)
-    body = (m.group(1) if m else raw).strip()
+    if m:
+        body = m.group(1).strip()
+    else:
+        # Fallback: If no closing fence found but starts with opening fence, strip it
+        body = raw.strip()
+        if body.startswith("```"):
+            body = re.sub(r"^```(?:json)?\s*", "", body, flags=re.I).strip()
+
     
     # 2. decoding to JSON
     try:
@@ -293,6 +313,7 @@ def _load_json_dict(raw: str) -> JSONType:
     except json.JSONDecodeError as e1:
         # 3. Handling cases with unescaped quotes
         try:
+            # 3. Handling cases with unescaped quotes
             # Use a regular expression to repair the unescaped internal quotation marks.
             fixed_body = re.sub(
                 r'("[^"]*")|([^"]+)', 
@@ -301,6 +322,17 @@ def _load_json_dict(raw: str) -> JSONType:
             )
             return json.loads(fixed_body, strict=False)
         except json.JSONDecodeError as e2:
+             # 3b. Handling invalid escape sequences (e.g. LaTeX \Pi -> \\Pi)
+            try:
+                # Replace backslash with double backslash if it is NOT followed by a valid JSON escape char
+                # Valid escapes: ", \, /, b, f, n, r, t, u
+                # We use negative lookahead to identify invalid escapes
+                fixed_body_escapes = re.sub(r'\\(?![\\"/bfnrtu])', r'\\\\', body)
+                return json.loads(fixed_body_escapes, strict=False)
+            except json.JSONDecodeError as e2b:
+                pass
+
+            # 4. Try handling single quotes or unquoted literals
             # 4. Try handling single quotes or unquoted literals (e.g. {'type': IMAGE})
             try:
                 # Replace single quotes with double quotes

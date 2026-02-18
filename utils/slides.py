@@ -5,8 +5,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import textwrap
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorDevice, AcceleratorOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
+from .textwork import _CONVERTER, _CONVERSION_CACHE
 
 def get_specific_element(pdf_path, element_type, element_num, image_path):
     """
@@ -16,17 +17,31 @@ def get_specific_element(pdf_path, element_type, element_num, image_path):
     if Path(image_path).exists() and Path(image_path).stat().st_size > 0:
         return image_path
 
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.images_scale = 5.0
-    pipeline_options.generate_page_images = True
-    pipeline_options.generate_picture_images = True
+    global _CONVERTER
+    pdf_key = str(pdf_path)
+    
+    if pdf_key in _CONVERSION_CACHE:
+        raw_result = _CONVERSION_CACHE[pdf_key]
+    else:
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.accelerator_options.device = AcceleratorDevice.CPU
+        pipeline_options.do_ocr = False
+        pipeline_options.images_scale = 5.0
+        pipeline_options.generate_page_images = True
+        pipeline_options.generate_picture_images = True
 
-    doc_converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
-    )
-    raw_result = doc_converter.convert(pdf_path)
+        # Use shared converter if available, else initialize
+        import utils.textwork as tw
+        if tw._CONVERTER is None:
+            tw._CONVERTER = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                }
+            )
+        
+        raw_result = tw._CONVERTER.convert(pdf_path)
+        tw._CONVERSION_CACHE[pdf_key] = raw_result
+
 
     table_index = 1
     image_index = 1
