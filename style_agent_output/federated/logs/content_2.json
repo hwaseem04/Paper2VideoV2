@@ -1,0 +1,21 @@
+{
+    "extracted_content": "BlindFed is a framework designed for 'double-blind' federated adaptation of Foundation Models (FMs). It addresses two primary privacy constraints: Model Privacy (the Learning Service Provider (LSP) retains full ownership and does not share the FM with data owners) and Data Privacy (clients do not reveal their sensitive task data to the LSP or each other). The framework relies on Fully Homomorphic Encryption (FHE) and consists of three core innovations: (i) FHE-friendly architectural modifications that replace non-linear operations with polynomial approximations and utilize low-rank parallel adapters; (ii) a two-stage split learning approach that uses offline knowledge distillation on auxiliary data followed by online encrypted inference for adapter training without requiring backpropagation through the FM; and (iii) a privacy-boosting scheme using sample-level permutations and stochastic block sampling to mitigate model extraction attacks. Empirical results on image classification tasks demonstrate its feasibility, though it involves high communication and computational costs for the LSP.",
+    "key_figures": [
+        {
+            "ref": "Figure 1",
+            "caption": "Conceptual illustration of BlindFed framework for double-blind federated adaptation of a foundation model.",
+            "relevance": "Provides a high-level visual summary of the 'double-blind' concept where neither the model nor the data is exposed to the opposing party."
+        },
+        {
+            "ref": "Figure 2",
+            "caption": "Overview of the proposed BlindFed framework for double-blind federated adaptation. The framework consists of three main components: (1) FHE-friendly architecture redesign, where the original foundation model (FM) is modified by approximating non-linear operations; (2) offline distillation, where the approximated blocks are fine-tuned via knowledge distillation using an auxiliary dataset; and (3) online adaptation, where clients interact the FHE-enabled FM under homomorphic encryption, performing local updates on the parallel adapter and classification head.",
+            "relevance": "Details the specific workflow and three-stage process of the BlindFed solution."
+        }
+    ],
+    "key_tables": [],
+    "key_equations": [],
+    "section_refs": [
+        "Abstract",
+        "1. Introduction"
+    ]
+}

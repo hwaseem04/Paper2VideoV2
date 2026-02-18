@@ -1,0 +1,26 @@
+{
+    "layout_template": "two_col_fig_left",
+    "background_color": "#FFFFFF",
+    "layout_regions": {
+        "title": {
+            "x": 0.05,
+            "y": 0.05,
+            "w": 0.9,
+            "h": 0.1
+        },
+        "figure": {
+            "x": 0.05,
+            "y": 0.2,
+            "w": 0.5,
+            "h": 0.7
+        },
+        "bullets": {
+            "x": 0.6,
+            "y": 0.25,
+            "w": 0.35,
+            "h": 0.6
+        }
+    },
+    "has_figure": true,
+    "style_rationale": "A two-column layout is chosen to showcase the detailed teacher-student distillation schematic (Figure 9) on the left, while summarizing the two-stage training process and loss objectives in bullets on the right. This provides a clear mapping between the visual architecture and the mathematical distillation steps within the short 7-second window."
+}

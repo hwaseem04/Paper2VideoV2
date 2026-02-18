@@ -1,0 +1,26 @@
+{
+    "layout_template": "two_col_fig_left",
+    "background_color": "#FFFFFF",
+    "layout_regions": {
+        "title": {
+            "x": 0.05,
+            "y": 0.05,
+            "w": 0.9,
+            "h": 0.1
+        },
+        "figure": {
+            "x": 0.05,
+            "y": 0.2,
+            "w": 0.45,
+            "h": 0.7
+        },
+        "bullets": {
+            "x": 0.55,
+            "y": 0.2,
+            "w": 0.4,
+            "h": 0.7
+        }
+    },
+    "has_figure": true,
+    "style_rationale": "A two-column layout with the architecture diagram (Figure 3) on the left is the most effective way to visualize the specific component replacements described in the text. The bullets on the right provide the mathematical context for the 'Quad' and 'ASoftmax' labels seen in the figure."
+}

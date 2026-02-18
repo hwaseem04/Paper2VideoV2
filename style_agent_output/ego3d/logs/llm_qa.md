@@ -2508,3 +2508,311 @@ Token usage so far: 120133 prompt tokens, 7901 completion tokens
 
 Cost so far: $1.43836
 
+_Note: These user-assistant interactions are independent and the system message is always attached in each turn for GPT._
+
+**System message for GPT**
+
+You are an expert in reading academic papers and creating video summaries based on them. 
+
+_Note: These user-assistant interactions are independent and the system message is always attached in each turn for GPT._
+
+**System message for GPT**
+
+You are an expert in reading academic papers and creating video summaries based on them. 
+
+_Note: These user-assistant interactions are independent and the system message is always attached in each turn for GPT._
+
+**System message for GPT**
+
+You are an expert in reading academic papers and creating video summaries based on them. 
+
+**Question**
+
+You are an expert presentation designer for academic video summaries.
+
+You are designing the TITLE PAGE layout for a paper presentation video.
+
+Paper metadata:
+{
+  "paper_title": "IKEA Ego 3D Dataset: Understanding furniture assembly actions from ego-view 3D Point Clouds",
+  "authors": [
+    {
+      "name": "Yizhak Ben-Shabat",
+      "affiliation_id": 1
+    },
+    {
+      "name": "Jonathan Paul",
+      "affiliation_id": 2
+    },
+    {
+      "name": "Eviatar Segev",
+      "affiliation_id": 2
+    },
+    {
+      "name": "Oren Shrout",
+      "affiliation_id": 2
+    },
+    {
+      "name": "Stephen Gould",
+      "affiliation_id": 1
+    }
+  ],
+  "affiliations": [
+    {
+      "id": 1,
+      "name": "Australian National University",
+      "email_domain": "anu.edu.au"
+    },
+    {
+      "id": 2,
+      "name": "Technion, Israel Institute of Technology",
+      "email_domain": "gmail.com"
+    }
+  ],
+  "venue": "WACV 2023"
+}
+
+Available logos:
+conference_logo: conference.png
+affiliation_1_logo: affiliation_1.png (Australian National University)
+affiliation_2_logo: affiliation_2.png (Technion, Israel Institute of Technology)
+
+Design a visually clean, professional title page layout. Use the reference style of academic presentation title slides:
+- Conference logo in a top corner
+- Affiliation logos grouped together (top row or below authors)
+- Paper title large and centered
+- Authors centered below title
+- Affiliation text small, centered
+- Venue name at bottom
+
+IMPORTANT: Vary the placement naturally — do NOT always put logos in the same position. Sometimes conference logo goes top-left, sometimes top-right. Sometimes affiliation logos go in the top row, sometimes below authors. Be creative but professional.
+
+## OUTPUT FORMAT — Return ONLY valid JSON:
+
+{
+  "layout_template": "title_page",
+  "background_color": "#FFFFFF",
+  "layout_regions": {
+    "conference_logo": {"x": 0.0, "y": 0.0, "w": 0.15, "h": 0.12},
+    "affiliation_logos": {"x": 0.5, "y": 0.0, "w": 0.45, "h": 0.12},
+    "title": {"x": 0.05, "y": 0.25, "w": 0.9, "h": 0.25},
+    "authors": {"x": 0.1, "y": 0.55, "w": 0.8, "h": 0.12},
+    "affiliations": {"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.08},
+    "venue": {"x": 0.3, "y": 0.82, "w": 0.4, "h": 0.06}
+  },
+  "style_rationale": "Brief explanation of why this positioning works."
+}
+
+## STRICT RULES:
+1. All x/y/w/h values must be normalized (0.0 to 1.0). Regions must not overlap.
+2. If no conference logo is available, omit the conference_logo region.
+3. If no affiliation logos are available, omit the affiliation_logos region.
+4. The title region should be generous — wide enough for long titles to wrap.
+5. Keep at least 5% margin from all edges.
+6. Output ONLY valid JSON, no markdown fences, no explanation.
+
+
+**Answer (from GEMINI)**
+
+"""{
+  "layout_template": "title_page",
+  "background_color": "#FFFFFF",
+  "layout_regions": {
+    "conference_logo": {
+      "x": 0.8,
+      "y": 0.05,
+      "w": 0.15,
+      "h": 0.1
+    },
+    "affiliation_logos": {
+      "x": 0.05,
+      "y": 0.05,
+      "w": 0.3,
+      "h": 0.1
+    },
+    "title": {
+      "x": 0.05,
+      "y": 0.25,
+      "w": 0.9,
+      "h": 0.2
+    },
+    "authors": {
+      "x": 0.1,
+      "y": 0.5,
+      "w": 0.8,
+      "h": 0.1
+    },
+    "affiliations": {
+      "x": 0.1,
+      "y": 0.65,
+      "w": 0.8,
+      "h": 0.1
+    },
+    "venue": {
+      "x": 0.3,
+      "y": 0.85,
+      "w": 0.4,
+      "h": 0.05
+    }
+  },
+  "style_rationale": "This layout uses a balanced top-row logo placement with the conference logo on the right and affiliation logos on the left. The title is prominently centered, followed by authors and affiliations in a clear hierarchy, concluding with the venue at the bottom for a professional academic look."
+}"""
+
+Token usage so far: 6095 prompt tokens, 400 completion tokens
+
+Cost so far: $0.07295
+
+_Note: These user-assistant interactions are independent and the system message is always attached in each turn for GPT._
+
+**System message for GPT**
+
+You are an expert in reading academic papers and creating video summaries based on them. 
+
+_Note: These user-assistant interactions are independent and the system message is always attached in each turn for GPT._
+
+**System message for GPT**
+
+You are an expert in reading academic papers and creating video summaries based on them. 
+
+_Note: These user-assistant interactions are independent and the system message is always attached in each turn for GPT._
+
+**System message for GPT**
+
+You are an expert in reading academic papers and creating video summaries based on them. 
+
+**Question**
+
+You are an expert presentation designer for academic video summaries.
+
+You are designing the TITLE PAGE layout for a paper presentation video.
+
+Paper metadata:
+{
+  "paper_title": "IKEA Ego 3D Dataset: Understanding furniture assembly actions from ego-view 3D Point Clouds",
+  "authors": [
+    {
+      "name": "Yizhak Ben-Shabat",
+      "affiliation_id": 1
+    },
+    {
+      "name": "Jonathan Paul",
+      "affiliation_id": 2
+    },
+    {
+      "name": "Eviatar Segev",
+      "affiliation_id": 2
+    },
+    {
+      "name": "Oren Shrout",
+      "affiliation_id": 2
+    },
+    {
+      "name": "Stephen Gould",
+      "affiliation_id": 1
+    }
+  ],
+  "affiliations": [
+    {
+      "id": 1,
+      "name": "Australian National University",
+      "email_domain": "anu.edu.au"
+    },
+    {
+      "id": 2,
+      "name": "Technion, Israel Institute of Technology",
+      "email_domain": "gmail.com"
+    }
+  ],
+  "venue": "WACV 2023"
+}
+
+Available logos:
+conference_logo: conference.png
+affiliation_1_logo: affiliation_1.png (Australian National University)
+affiliation_2_logo: affiliation_2.png (Technion, Israel Institute of Technology)
+
+Design a visually clean, professional title page layout. Use the reference style of academic presentation title slides:
+- Conference logo in a top corner
+- Affiliation logos grouped together (top row or below authors)
+- Paper title large and centered
+- Authors centered below title
+- Affiliation text small, centered
+- Venue name at bottom
+
+IMPORTANT: Vary the placement naturally — do NOT always put logos in the same position. Sometimes conference logo goes top-left, sometimes top-right. Sometimes affiliation logos go in the top row, sometimes below authors. Be creative but professional.
+
+## OUTPUT FORMAT — Return ONLY valid JSON:
+
+{
+  "layout_template": "title_page",
+  "background_color": "#FFFFFF",
+  "layout_regions": {
+    "conference_logo": {"x": 0.0, "y": 0.0, "w": 0.15, "h": 0.12},
+    "affiliation_logos": {"x": 0.5, "y": 0.0, "w": 0.45, "h": 0.12},
+    "title": {"x": 0.05, "y": 0.25, "w": 0.9, "h": 0.25},
+    "authors": {"x": 0.1, "y": 0.55, "w": 0.8, "h": 0.12},
+    "affiliations": {"x": 0.1, "y": 0.7, "w": 0.8, "h": 0.08},
+    "venue": {"x": 0.3, "y": 0.82, "w": 0.4, "h": 0.06}
+  },
+  "style_rationale": "Brief explanation of why this positioning works."
+}
+
+## STRICT RULES:
+1. All x/y/w/h values must be normalized (0.0 to 1.0). Regions must not overlap.
+2. If no conference logo is available, omit the conference_logo region.
+3. If no affiliation logos are available, omit the affiliation_logos region.
+4. The title region should be generous — wide enough for long titles to wrap.
+5. Keep at least 5% margin from all edges.
+6. Output ONLY valid JSON, no markdown fences, no explanation.
+
+
+**Answer (from GEMINI)**
+
+"""{
+  "layout_template": "title_page",
+  "background_color": "#FFFFFF",
+  "layout_regions": {
+    "conference_logo": {
+      "x": 0.8,
+      "y": 0.05,
+      "w": 0.15,
+      "h": 0.1
+    },
+    "affiliation_logos": {
+      "x": 0.05,
+      "y": 0.05,
+      "w": 0.3,
+      "h": 0.1
+    },
+    "title": {
+      "x": 0.05,
+      "y": 0.25,
+      "w": 0.9,
+      "h": 0.2
+    },
+    "authors": {
+      "x": 0.1,
+      "y": 0.5,
+      "w": 0.8,
+      "h": 0.1
+    },
+    "affiliations": {
+      "x": 0.1,
+      "y": 0.65,
+      "w": 0.8,
+      "h": 0.1
+    },
+    "venue": {
+      "x": 0.3,
+      "y": 0.85,
+      "w": 0.4,
+      "h": 0.05
+    }
+  },
+  "style_rationale": "This layout balances the top row with affiliation logos on the left and the conference logo on the right. The title is prominently centered, followed by authors and affiliations in a clear hierarchy, with the venue grounding the slide at the bottom."
+}"""
+
+Token usage so far: 6095 prompt tokens, 393 completion tokens
+
+Cost so far: $0.07274
+

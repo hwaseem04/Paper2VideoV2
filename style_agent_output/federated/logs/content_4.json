@@ -1,0 +1,48 @@
+{
+    "extracted_content": "The Learning Service Provider (LSP) performs offline knowledge distillation to train an FHE-friendly 'student' model using the original foundation model as a 'teacher' on an independent auxiliary dataset ($D_{aux}$). This process is conducted in two stages: the first 15 epochs focus on distilling intermediate representations, including embeddings, attention matrices (pre-normalization), and hidden states after each block. The subsequent 15 epochs focus on prediction-layer distillation by matching logits. The objective is to ensure that the redesigned model\u2014which replaces non-linear operations like Softmax and GELU with polynomial approximations\u2014retains the representational power and accuracy of the original FM before any client collaboration occurs.",
+    "key_figures": [
+        {
+            "ref": "Figure 2",
+            "caption": "Overview of the proposed BlindFed framework for double-blind federated adaptation.",
+            "relevance": "Shows the 'Offline Distillation' step as a core component of the server-side workflow using an auxiliary dataset."
+        },
+        {
+            "ref": "Figure 9",
+            "caption": "Schematic illustration of the layer-wise knowledge distillation (Equations 17 and 18).",
+            "relevance": "Provides a detailed visual representation of how attention matrices and hidden representations are distilled from the teacher model to the student model."
+        }
+    ],
+    "key_tables": [
+        {
+            "ref": "Table 5",
+            "caption": "Softmax approximation results.",
+            "relevance": "Demonstrates the effectiveness of the distillation process in maintaining accuracy while using polynomial approximations of varying degrees."
+        },
+        {
+            "ref": "Table 6",
+            "caption": "Approximation of the reciprocal (inverse function).",
+            "relevance": "Shows the distillation results for the approximated inverse function used in LayerNorm and Softmax."
+        }
+    ],
+    "key_equations": [
+        {
+            "ref": "Equation 17",
+            "content": "\\mathcal{L}_a = \frac{1}{h} \\sum_{i=1}^h ||\\mathbf{A}_i^S - \\mathbf{A}_i^T||^2",
+            "relevance": "Defines the loss function for distilling attention matrices between the student and teacher models."
+        },
+        {
+            "ref": "Equation 18",
+            "content": "\\mathcal{L}_h = ||\\mathbf{H}^S - \\mathbf{H}^T||^2",
+            "relevance": "Defines the loss function for distilling hidden representations."
+        },
+        {
+            "ref": "Equation 20",
+            "content": "\\mathcal{L}_p = \\mathcal{L}_{CE}(\\mathbf{z}^S/\tau, \\mathbf{z}^T/\tau)",
+            "relevance": "Defines the logit-matching loss used in the second stage of the distillation process."
+        }
+    ],
+    "section_refs": [
+        "Section 4.2",
+        "Appendix C"
+    ]
+}
