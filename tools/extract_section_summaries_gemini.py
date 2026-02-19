@@ -1,6 +1,6 @@
 """
 Extract section-wise summaries from research papers using Gemini.
-Reads PDFs from data_reference/final/ and outputs to section_summary_extraction_chatgpt/
+Reads PDFs from data_reference/final/ and outputs to section_summary_extraction_gemini/
 """
 
 import json
@@ -141,13 +141,14 @@ Please fix the issue and return valid JSON. Common issues:
                 return {}
 
 
-def process_all_pdfs(input_dir, output_dir):
+def process_all_pdfs(input_dir, output_dir, target_files=None):
     """
-    Process all PDFs in input_dir and save section summaries to output_dir.
+    Process all PDFs in input_dir (or specific target_files) and save section summaries to output_dir.
 
     Args:
         input_dir: Directory containing PDF files
         output_dir: Directory to save JSON output files
+        target_files: Optional list of filenames to process. If None, process all in input_dir.
     """
     input_path = Path(input_dir)
     output_path = Path(output_dir)
@@ -160,8 +161,19 @@ def process_all_pdfs(input_dir, output_dir):
     gemini_client = GEMINI(config_path=Path("config.yml"))
     print(f"Using model: {gemini_client.model}\n")
 
-    # Get all PDF files
-    pdf_files = sorted(list(input_path.glob('*.pdf')))
+    # Get PDF files
+    if target_files:
+        pdf_files = []
+        for f in target_files:
+            p = input_path / f
+            if p.exists():
+                pdf_files.append(p)
+            else:
+                print(f"Warning: File not found: {p}")
+        pdf_files = sorted(pdf_files)
+    else:
+        pdf_files = sorted(list(input_path.glob('*.pdf')))
+
     print(f"Found {len(pdf_files)} PDF files to process\n")
 
     # Process each PDF
@@ -227,7 +239,11 @@ def process_all_pdfs(input_dir, output_dir):
 
 
 if __name__ == "__main__":
-    input_directory = "data_reference/final"
-    output_directory = "data_reference/section_summary_extraction_chatgpt"
+    import argparse
+    parser = argparse.ArgumentParser(description="Extract section summaries using Gemini")
+    parser.add_argument("--input_dir", default="data_reference/final", help="Directory containing PDF files")
+    parser.add_argument("--output_dir", default="data_reference/section_summary_extraction_gemini", help="Directory to save JSON output")
+    parser.add_argument("--files", nargs="+", help="Specific PDF filenames to process")
 
-    process_all_pdfs(input_directory, output_directory)
+    args = parser.parse_args()
+    process_all_pdfs(args.input_dir, args.output_dir, args.files)
