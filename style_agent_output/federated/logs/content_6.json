@@ -1,0 +1,32 @@
+{
+    "extracted_content": "BlindFed utilizes a low-rank parallel adapter method for local learning, which is essential because it does not require backpropagation through the Foundation Model (FM). Clients receive intermediate representations in plaintext after each transformer block during the encrypted inference phase, allowing them to perform local updates on their parallel adapters and classification heads. The parallel adapter design incorporates down-projection and up-projection matrices with a GELU activation and a learnable scaling factor. To maintain privacy during the global update, BlindFed employs Secure Multi-Party Computation (MPC) for secure aggregation. This allows the server to compute the average of client updates (via FedAvg) to form the global adapter and classification head without ever seeing the individual local updates from the data owners.",
+    "key_figures": [
+        {
+            "ref": "Figure 4",
+            "caption": "Illustration of the parallel adapter design.",
+            "relevance": "Shows how the parallel adapters are structured alongside the transformer blocks and how they are updated on the client side."
+        },
+        {
+            "ref": "Figure 3",
+            "caption": "FHE-friendly architecture redesign. Each transformer block\u2019s non-linear operations \u2013 GELU activations, Softmax attention, and the division step in LayerNorm \u2013 are replaced with low-degree polynomial approximations (denoted \u201cQuad\u201d for GELU and \u201cASoftmax\u201d for Softmax). A lightweight parallel adapter and classification head are then trained on the client side.",
+            "relevance": "Visualizes the separation between the server-side FHE-friendly blocks and the client-side parallel adapter and classifier head."
+        }
+    ],
+    "key_tables": [],
+    "key_equations": [
+        {
+            "ref": "Equation 6",
+            "content": "h_\\ell = g_\\ell(b_\\ell + h_{\\ell-1}) + h_{\\ell-1}",
+            "relevance": "Defines the output of the low-rank parallel adapter corresponding to attention block l."
+        },
+        {
+            "ref": "Equation 7",
+            "content": "g_\\ell(z) = \u0007lpha W^u_\\ell \text{GELU}(W^d_\\ell z)",
+            "relevance": "Describes the adapter function using down-projection (W^d) and up-projection (W^u) matrices."
+        }
+    ],
+    "section_refs": [
+        "Section 4.2.2",
+        "Section 4.2.3"
+    ]
+}

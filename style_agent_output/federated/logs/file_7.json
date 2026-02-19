@@ -1,0 +1,113 @@
+{
+    "scene_id": 7,
+    "title": "Boosting Model Privacy",
+    "summary": "To prevent model extraction attacks, BlindFed introduces sample-level permutation and Stochastic Block Sampling (SBS). These techniques ensure clients cannot easily map input-output pairs of individual transformer blocks.",
+    "paper_section": "Model Privacy Boosting",
+    "narrative_role": "methodology",
+    "time_allocation_sec": 7,
+    "reference_style_examples": [
+        "NeurIPS-2024-Dual-Prototype-Evolving-for_Media"
+    ],
+    "extracted_content": "BlindFed introduces two primary mechanisms to mitigate model extraction attacks that could occur because intermediate representations are exposed in plaintext to clients during the block-by-block encrypted inference process. \n\n1. **Sample-level Permutation**: The server applies a random permutation matrix $\\Pi_\\ell$ to each batch of intermediate representations before sending them to the client. This prevents the client from linking specific input-output pairs $(b_{\\ell-1}, b_\\ell)$ for any training sample. Proposition 1 establishes that even if relative permutations between blocks are revealed to facilitate adapter computation, uniquely recovering the individual permutation matrices is computationally infeasible (requiring $n!$ trials).\n\n2. **Stochastic Block Sampling (SBS)**: To counter attacks that exploit feature similarity between consecutive blocks, the server returns only a subset of block outputs in each forward pass. SBS follows a structured rule: if block $\\ell$ is sampled, block $\\ell+1$ is deterministically skipped. This ensures that any two representations seen by the client are separated by at least one layer, which significantly reduces feature similarity and breaks the diagonal alignment required for similarity-based extraction attacks. Empirical results in Table 1 show that adding SBS provides these privacy gains with minimal impact on the final model accuracy.",
+    "layout": {
+        "template": "two_col_fig_left",
+        "background_color": "#FFFFFF",
+        "regions": {
+            "title": {
+                "x": 0.05,
+                "y": 0.05,
+                "w": 0.9,
+                "h": 0.1
+            },
+            "figure": {
+                "x": 0.05,
+                "y": 0.2,
+                "w": 0.45,
+                "h": 0.7
+            },
+            "bullets": {
+                "x": 0.55,
+                "y": 0.2,
+                "w": 0.4,
+                "h": 0.7
+            }
+        }
+    },
+    "style": "Slides",
+    "expected_build_steps": 4,
+    "elements": {
+        "title": "Boosting Model Privacy",
+        "figure": {
+            "type": "paper_figure",
+            "ref": "Figure 5",
+            "caption": "Stochastic block sampling (SBS) state transition strategy"
+        },
+        "bullets": [
+            "**Sample-level Permutation** shuffles batches to hide block-specific input-output mappings.",
+            "**Stochastic Block Sampling (SBS)** skips layers to neutralize similarity-based extraction attacks.",
+            "**Proposition 1** guarantees that recovering individual permutations is computationally infeasible."
+        ]
+    },
+    "builds": [
+        {
+            "step_index": 0,
+            "time_offset_sec": 0.0,
+            "actions": [
+                {
+                    "type": "show",
+                    "target": "title"
+                },
+                {
+                    "type": "show",
+                    "target": "figure"
+                }
+            ],
+            "audio_segment": "To prevent model extraction,",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 1,
+            "time_offset_sec": 1.75,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[0]"
+                }
+            ],
+            "audio_segment": "BlindFed uses sample-level permutations",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 2,
+            "time_offset_sec": 3.5,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[1]"
+                }
+            ],
+            "audio_segment": "and stochastic block sampling,",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 3,
+            "time_offset_sec": 5.25,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[2]"
+                }
+            ],
+            "audio_segment": "ensuring layer-wise privacy with minimal impact on accuracy.",
+            "visual_emphasis": []
+        }
+    ],
+    "source": [
+        "Section 4.3",
+        "Figure 5",
+        "Proposition 1"
+    ],
+    "time_cost": "7",
+    "audio_content": "To prevent model extraction, BlindFed uses sample-level permutations and stochastic block sampling, ensuring layer-wise privacy with minimal impact on accuracy.",
+    "prompt": "A slide showing Figure 5 (the SBS state transition diagram) on the left. On the right, three bullet points explain how sample-level permutation and stochastic block sampling protect the model from extraction attacks, referencing the theoretical guarantee of Proposition 1."
+}

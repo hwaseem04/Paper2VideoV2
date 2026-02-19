@@ -1,0 +1,26 @@
+{
+    "layout_template": "full_fig_with_callouts",
+    "background_color": "#FFFFFF",
+    "layout_regions": {
+        "title": {
+            "x": 0.05,
+            "y": 0.05,
+            "w": 0.9,
+            "h": 0.1
+        },
+        "figure": {
+            "x": 0.05,
+            "y": 0.18,
+            "w": 0.9,
+            "h": 0.55
+        },
+        "bullets": {
+            "x": 0.05,
+            "y": 0.75,
+            "w": 0.9,
+            "h": 0.2
+        }
+    },
+    "has_figure": true,
+    "style_rationale": "The 'full_fig_with_callouts' layout is ideal for presenting Table 1, which contains the core accuracy results. Given the table's width (comparing centralized and multiple federated scenarios), a full-width figure region ensures maximum legibility, while the bullets below provide a concise summary of accuracy, robustness, and efficiency."
+}

@@ -1,0 +1,112 @@
+{
+    "scene_id": 3,
+    "title": "FHE-Friendly Architecture Redesign",
+    "summary": "To support encrypted inference, standard non-linear operations like Softmax, GELU, and LayerNorm are replaced with low-degree polynomial approximations, such as Taylor series and quadratic functions, making the FM compatible with FHE schemes like CKKS.",
+    "paper_section": "Proposed BlindFed Framework",
+    "narrative_role": "methodology",
+    "time_allocation_sec": 8,
+    "reference_style_examples": [
+        "Unsqueeze [CLS] Bottleneck to Learn Rich Representations"
+    ],
+    "extracted_content": "To enable encrypted inference using Fully Homomorphic Encryption (FHE) schemes like CKKS, the Foundation Model (FM) must be redesigned because FHE only supports polynomial operations (addition and multiplication). The BlindFed framework replaces standard non-linear transformer operations with low-degree polynomial approximations: Softmax is approximated using a Taylor series expansion for the exponential function; GELU is replaced by a quadratic function (0.125x\u00b2 + 0.25x + 0.5); and the division steps in LayerNorm and Softmax are implemented via Goldschmidt\u2019s algorithm. Furthermore, the architecture is modified to use parallel adapters (LoSA) instead of sequential ones (LoRA) because sequential adapters would require backpropagation through the FM, which is computationally infeasible when data remains encrypted. This redesign allows the server to perform encrypted forward passes while the client trains the adapter on plaintext intermediate representations.",
+    "layout": {
+        "template": "two_col_fig_left",
+        "background_color": "#FFFFFF",
+        "regions": {
+            "title": {
+                "x": 0.05,
+                "y": 0.05,
+                "w": 0.9,
+                "h": 0.1
+            },
+            "figure": {
+                "x": 0.05,
+                "y": 0.2,
+                "w": 0.45,
+                "h": 0.7
+            },
+            "bullets": {
+                "x": 0.55,
+                "y": 0.2,
+                "w": 0.4,
+                "h": 0.7
+            }
+        }
+    },
+    "style": "Slides",
+    "expected_build_steps": 4,
+    "elements": {
+        "title": "FHE-Friendly Architecture Redesign",
+        "figure": {
+            "type": "paper_figure",
+            "ref": "Figure 3",
+            "caption": "Redesigning transformer blocks with polynomial 'Quad' and 'ASoftmax' components."
+        },
+        "bullets": [
+            "Polynomial approximations replace non-linear GELU and Softmax operations",
+            "Goldschmidt\u2019s algorithm enables FHE-compatible division for LayerNorm",
+            "Parallel adapters (LoSA) eliminate the need for encrypted backpropagation"
+        ]
+    },
+    "builds": [
+        {
+            "step_index": 0,
+            "time_offset_sec": 0.0,
+            "actions": [
+                {
+                    "type": "show",
+                    "target": "title"
+                },
+                {
+                    "type": "show",
+                    "target": "figure"
+                }
+            ],
+            "audio_segment": "To enable encrypted inference, we must first redesign the model architecture.",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 1,
+            "time_offset_sec": 2.0,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[0]"
+                }
+            ],
+            "audio_segment": "We replace non-linearities with polynomial approximations for GELU and Softmax.",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 2,
+            "time_offset_sec": 4.0,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[1]"
+                }
+            ],
+            "audio_segment": "Goldschmidt\u2019s algorithm is then used to enable FHE-compatible division.",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 3,
+            "time_offset_sec": 6.0,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[2]"
+                }
+            ],
+            "audio_segment": "Finally, we switch to parallel adapters, avoiding backpropagation through the FM.",
+            "visual_emphasis": []
+        }
+    ],
+    "source": [
+        "Section 4.1",
+        "Figure 3"
+    ],
+    "time_cost": "8",
+    "audio_content": "To enable encrypted inference, we replace non-linearities with polynomial approximations and switch to parallel adapters, avoiding backpropagation through the FM.",
+    "prompt": "A slide showing Figure 3 from the paper on the left, illustrating the replacement of GELU and Softmax with polynomial approximations. On the right, bullet points explain the use of Taylor series, quadratic functions, and parallel adapters for FHE compatibility."
+}

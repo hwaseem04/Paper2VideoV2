@@ -1,0 +1,32 @@
+{
+    "extracted_content": "The online adaptation stage uses an interactive protocol to handle the high multiplicative depth of Foundation Models, which exceeds the limits of current FHE schemes. Instead of evaluating the entire network at once, BlindFed performs encrypted inference one transformer block at a time. For each block, the server computes the encrypted output, which the client then decrypts and re-encrypts before returning it to the server for the next block. This process ensures that the server never accesses the client's private key or plaintext data. After the final block, the client passes decrypted representations through a local classification head, and the server computes the final batch loss entirely within the encrypted domain to facilitate local learning updates.",
+    "key_figures": [
+        {
+            "ref": "Figure 2",
+            "caption": "Overview of the proposed BlindFed framework for double-blind federated adaptation.",
+            "relevance": "Illustrates the 'Online Adaptation' phase where clients interact with the FHE-enabled FM on the server."
+        },
+        {
+            "ref": "Figure 3",
+            "caption": "FHE-friendly architecture redesign.",
+            "relevance": "Shows the flow of encrypted intermediate representations between the server's attention blocks and the client's parallel adapter."
+        }
+    ],
+    "key_tables": [
+        {
+            "ref": "Table 7",
+            "caption": "Computational and memory overhead for encrypted inference and encryption using FHE with the Tile Tensors framework.",
+            "relevance": "Provides the specific performance metrics (time and memory) for the encrypted inference process described in this section."
+        }
+    ],
+    "key_equations": [
+        {
+            "ref": "Encrypted intermediate representation",
+            "content": "E(F(E(b_l)))",
+            "relevance": "Describes the client-side operation of decrypting (F) and re-encrypting (E) the block output (b_l) to reset multiplicative depth."
+        }
+    ],
+    "section_refs": [
+        "Section 4.2.1"
+    ]
+}

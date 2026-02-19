@@ -1,0 +1,113 @@
+{
+    "scene_id": 1,
+    "title": "The Challenge of Double-Blind Adaptation",
+    "summary": "Foundation Models (FMs) require task-specific adaptation, but privacy barriers exist: Learning Service Providers (LSPs) must protect proprietary models, while data owners must keep sensitive data confidential. This creates a 'double-blind' constraint where neither party can access the other's assets.",
+    "paper_section": "Introduction",
+    "narrative_role": "problem",
+    "time_allocation_sec": 7,
+    "reference_style_examples": [
+        "NeurIPS-2024-Dual-Prototype-Evolving-for_Media"
+    ],
+    "extracted_content": "Foundation models (FMs) like GPT, CLIP, and ViTs achieve state-of-the-art results but require task-specific adaptation for challenging out-of-domain tasks such as medical or satellite imagery. This adaptation process faces two primary hurdles: computational complexity and data availability. Privacy concerns and regulations prevent data owners (e.g., hospitals or banks) from sharing sensitive datasets with the Learning Service Provider (LSP). Simultaneously, proprietary restrictions prevent the LSP from sharing the FM weights with data owners. This creates a 'double-blind' privacy constraint where (i) the LSP must not learn anything about local datasets (Data Privacy) and (ii) data owners must not learn anything about the original FM (Model Privacy). Existing parameter-efficient fine-tuning (PEFT) methods like LoRA typically require backpropagation through the FM backbone, which is computationally expensive and often incompatible with these privacy constraints.",
+    "layout": {
+        "template": "two_col_fig_right",
+        "background_color": "#FFFFFF",
+        "regions": {
+            "title": {
+                "x": 0.05,
+                "y": 0.05,
+                "w": 0.9,
+                "h": 0.1
+            },
+            "bullets": {
+                "x": 0.05,
+                "y": 0.2,
+                "w": 0.4,
+                "h": 0.7
+            },
+            "figure": {
+                "x": 0.5,
+                "y": 0.2,
+                "w": 0.45,
+                "h": 0.7
+            }
+        }
+    },
+    "style": "Slides",
+    "expected_build_steps": 4,
+    "elements": {
+        "title": "The Double-Blind Adaptation Challenge",
+        "figure": {
+            "type": "paper_figure",
+            "ref": "Figure 1",
+            "caption": "The double-blind privacy constraint between LSP and Data Owners."
+        },
+        "bullets": [
+            "FMs require task-specific adaptation for out-of-domain data",
+            "Model Privacy: Clients cannot access proprietary model weights",
+            "Data Privacy: LSPs cannot access sensitive client datasets"
+        ]
+    },
+    "builds": [
+        {
+            "step_index": 0,
+            "time_offset_sec": 0.0,
+            "actions": [
+                {
+                    "type": "show",
+                    "target": "title"
+                },
+                {
+                    "type": "show",
+                    "target": "figure"
+                }
+            ],
+            "audio_segment": "Adapting foundation models is vital,",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 1,
+            "time_offset_sec": 1.75,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[0]"
+                }
+            ],
+            "audio_segment": "but privacy barriers create a double-blind challenge",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 2,
+            "time_offset_sec": 3.5,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[1]"
+                }
+            ],
+            "audio_segment": "where neither the proprietary model",
+            "visual_emphasis": []
+        },
+        {
+            "step_index": 3,
+            "time_offset_sec": 5.25,
+            "actions": [
+                {
+                    "type": "fade_in",
+                    "target": "bullets[2]"
+                }
+            ],
+            "audio_segment": "nor the sensitive training data can be shared.",
+            "visual_emphasis": []
+        }
+    ],
+    "source": [
+        "Figure 1",
+        "Section 1",
+        "Section 3"
+    ],
+    "time_cost": "7",
+    "audio_content": "Adapting foundation models is vital, but privacy barriers create a double-blind challenge where neither the proprietary model nor the sensitive training data can be shared.",
+    "prompt": "A slide showing the double-blind privacy problem. On the left, bullet points describe the conflict between model and data privacy. On the right, Figure 1 illustrates the conceptual framework where the LSP and clients collaborate without sharing assets."
+}
