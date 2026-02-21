@@ -1,5 +1,7 @@
 config.yml
-
+.vulture_env
+ruff_report.txt
+vulture_report.txt
 #
 output/federated
 output/*
