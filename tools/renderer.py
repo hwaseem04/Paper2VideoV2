@@ -41,37 +41,6 @@ class SlideRenderer:
             except OSError:
                 return ImageFont.load_default()
 
-    def _generate_audio(self, text, output_path):
-        if not text:
-             return None
-        
-        if self.tts_engine:
-            try:
-                # Assume Qwentts interface: return_audio(text) -> URL
-                # Or other engine -> bytes
-                # Preacher usually handles downloading if it's a URL
-                # but here we are inside Renderer.
-                
-                # Check if tts_engine has 'return_audio' (Qwentts)
-                if hasattr(self.tts_engine, 'return_audio'):
-                     audio_url = self.tts_engine.return_audio(text)
-                     # Download
-                     import requests
-                     resp = requests.get(audio_url)
-                     if resp.status_code == 200:
-                         with open(output_path, "wb") as f:
-                             f.write(resp.content)
-                         return str(output_path)
-                
-                # Check if it has 'synthesis' (Azure/OpenAI style?)
-                # For now, just Qwentts support based on codebase
-            except Exception as e:
-                self.logger.error(f"TTS failed: {e}")
-        
-        # Fallback: create silent audio matching estimated duration?
-        # Or just return None (Video will be silent duration)
-        return None
-
     def render_scene(self, scene_plan: dict, scene_idx: int) -> str:
         """
         Render a full scene video based on the plan.
@@ -83,14 +52,6 @@ class SlideRenderer:
         layout = scene_plan.get("layout", {})
         elements = scene_plan.get("elements", {})
         builds = scene_plan.get("builds", [])
-        
-        if not builds:
-             # Fallback if no builds defined (should not happen with new prompt)
-             builds = [{
-                 "step_index": 0,
-                 "actions": [{"type": "show", "target": "all"}],
-                 "audio_segment": scene_plan.get("audio_content", "")
-             }]
 
         clips = []
         

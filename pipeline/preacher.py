@@ -1,5 +1,6 @@
 from pathlib import Path
 from PIL import Image
+import yaml
 import logging
 from time import localtime, strftime
 import json
@@ -130,6 +131,10 @@ class Preacher:
         schedule_example_path: Optional[Path],
         silent: bool,
     ) -> None:
+        # Load config
+        with open(llm_config_path, "r", encoding="utf-8") as f:
+            self.cfg = yaml.safe_load(f)
+
         # logger
         self.qa_logger = get_logger(
             logger_name="QA",
@@ -250,19 +255,23 @@ class Preacher:
         # Retriever & Style DB
         try:
             # Check for pre-computed index in data_reference first
+            openai_global_index = Path("data_reference/faiss/global")
             data_ref_index = Path("data_reference/paper_index")
             legacy_index = Path("output/test_index")
             
-            if data_ref_index.exists():
+            if openai_global_index.exists():
+                index_path = openai_global_index
+                use_openai = True
+                self.workflow_logger.info(f"Using OpenAI global index at {index_path}")
+            elif data_ref_index.exists():
                 index_path = data_ref_index
+                use_openai = False
                 self.workflow_logger.info(f"Using pre-computed index at {index_path}")
-            elif legacy_index.exists():
-                index_path = legacy_index
-                self.workflow_logger.info(f"Using legacy index at {index_path}")
             else:
                 # Fallback: try to build from dataset if no index found
                 self.workflow_logger.info("No index found. Attempting to build from 'dataset' directory...")
                 index_path = legacy_index # Default save location for auto-build
+                use_openai = False
                 source_dir = Path("dataset")
                 if source_dir.exists():
                     temp_retriever = PaperRetriever(logger=self.workflow_logger)
@@ -274,10 +283,13 @@ class Preacher:
                 else:
                      self.workflow_logger.warning("'dataset' directory not found. Cannot build index.")
 
-            self.retriever = PaperRetriever(index_path=index_path)
+            self.retriever = PaperRetriever(index_path=index_path, use_openai=use_openai)
+            
+            # Retrieval Configuration
+            self.retrieval_top_k = self.cfg.get("GEMINI", {}).get("retrieval_top_k", 5)
             
             self.style_db = {}
-            style_db_path = Path("data_reference/style_db/db_summary.json")
+            style_db_path = Path("data_reference/style_db_refined_final/db_summary.json")
             if style_db_path.exists():
                 with open(style_db_path, "r") as f:
                     summary = json.load(f)
@@ -308,95 +320,168 @@ class Preacher:
         context = []
         try:
             # 1. Retrieve similar papers
-            similar_papers = self.retriever.retrieve_similar_papers(pdf_path=self.pdf_path, k=3)
-            self.workflow_logger.info(f"Retrieved {len(similar_papers)} papers. Type of first: {type(similar_papers[0]) if similar_papers else 'None'}")
+            k = self.retrieval_top_k
+            similar_papers = self.retriever.retrieve_similar_papers(pdf_path=self.pdf_path, k=k)
+            self.workflow_logger.info(f"Retrieved {len(similar_papers)} papers for global style context. Top-k={k}")
             
+            print(f"\n[USER LOG] Top {len(similar_papers)} similar papers found for global planning:")
             context.append("## Similar Papers found in specific domain:")
             for p in similar_papers:
-                if isinstance(p, dict):
-                    context.append(f"- {p.get('title', 'Unknown')}")
-                else:
-                    self.workflow_logger.warning(f"Unexpected item type in retrieval: {type(p)}")
-                    context.append(f"- {str(p)}")
+                title = p.get('paper_name', 'Unknown')
+                print(f" - {title}")
+                context.append(f"- {title}")
                 
-            # 2. Retrieve style examples (placeholder logic for now)
-            # Find if we have video style for any of these
+            # 2. Retrieve style examples
             style_matches = []
             for p in similar_papers:
-                pdf_stem = Path(p['path']).stem
-                if pdf_stem in self.style_db:
-                    style_matches.append(pdf_stem)
-                else:
-                    raise KeyError(f"Retrieved paper '{pdf_stem}' not found in style_db. FAISS index and style DB are out of sync.")
+                paper_title = p.get('paper_name', '')
+                if paper_title in self.style_db:
+                    style_matches.append((paper_title, self.style_db[paper_title]))
             
-           
-            total_slides = 0
+            total_slides_list = []
             if style_matches:
                 context.append("\n## Reference Presentation Styles (from existing videos):")
-                for vid_id in style_matches:
-                    path = self.style_db[vid_id]
-                    meta_path = Path(path) / "metadata.json"
+                for title, path in style_matches:
+                    meta_path = Path(path)
                     if meta_path.exists():
                         with open(meta_path, "r") as f:
                             meta = json.load(f)
-                            slides_cnt = len(meta.get("slides", []))
-                            total_slides += slides_cnt
-                            avg_builds = sum(len(s.get("builds", [])) for s in meta.get("slides", [])) / max(1, slides_cnt)
-                            context.append(f"- Video '{vid_id}': approx {slides_cnt} slides, {avg_builds:.1f} builds/slide.")
+                            total_slides = meta.get("total_slides", len(meta.get("slides", [])))
+                            total_slides_list.append(total_slides)
+                            context.append(f"- Paper '{title}': total {total_slides} slides.")
                 
-                if len(style_matches) > 0:
-                    avg_scenes = int(total_slides / len(style_matches))
+                if total_slides_list:
+                    avg_slides = sum(total_slides_list) / len(total_slides_list)
+                    min_slides = min(total_slides_list)
+                    max_slides = max(total_slides_list)
                     
-                    # Adjust based on PDF content length (heuristic)
+                    # Heuristic for recommendation based on content density
                     try:
                         doc = fitz.open(self.pdf_path)
-                        text_len = sum(len(p.get_text()) for p in doc)
                         page_count = len(doc)
                         
-                        # Heuristic: ~2 scenes per page of dense text, or 1 scene per 1000 chars?
-                        # Let's say baseline is 1 scene per 1.5 pages
-                        content_estimated_scenes = max(5, int(page_count / 1.5))
+                        # Analyze content density
+                        text_len = sum(len(p.get_text()) for p in doc)
+                        num_figs = sum(len(p.get_images()) for p in doc)
                         
-                        # Weighted average: 70% content, 30% style reference
-                        final_scenes = int(0.7 * content_estimated_scenes + 0.3 * avg_scenes)
-                        context.append(f"\nRECOMMENDATION: Target approximately {final_scenes} scenes (Calculated from {page_count} pages of content and reference styles).")
+                        # Heuristic: 
+                        # - Baseline: 1.2 scenes per page
+                        # - Complexity: Adjust based on average chars per page (baseline 3000)
+                        # - Figures: Each figure adds ~0.3 scene weight
+                        chars_per_page = text_len / max(1, page_count)
+                        complexity_factor = max(0.8, min(1.5, chars_per_page / 3000))
+                        
+                        content_estimated_slides = (page_count * 1.2 + num_figs * 0.3) * complexity_factor
+                        content_estimated_slides = max(5, int(content_estimated_slides))
+                        
+                        # Weighted average: 60% content density, 40% style reference
+                        final_recommendation = int(0.6 * content_estimated_slides + 0.4 * avg_slides)
+                        
+                        context.append(f"\nRECOMMENDATION: Target approximately {final_recommendation} scenes.")
+                        context.append(f"  - Analysis: {page_count} pages, {num_figs} figures, high density factor {complexity_factor:.1f}x.")
+                        context.append(f"  - Reference Range: similar papers used {min_slides}-{max_slides} slides.")
                     except Exception as e:
                          self.workflow_logger.warning(f"Failed to analyze PDF content for planning: {e}")
-                         context.append(f"\nRECOMMENDATION: Target approximately {avg_scenes} scenes (Based on reference styles).")
+                         context.append(f"\nRECOMMENDATION: Target approximately {int(avg_slides)} scenes.")
 
         except Exception as e:
             self.workflow_logger.warning(f"Global retrieval failed: {e}")
+            import traceback
+            self.workflow_logger.error(traceback.format_exc())
             
         return "\n".join(context)
 
     def retrieve_scene_style(self, scene_plan: dict) -> str:
         """
         Retrieve context for low-level planning (scene specific).
-        Dynamically selects a reference style/layout based on scene content keywords.
+        Uses section-wise retrieval and queries style_db_refined_final.
         """
-        scene_desc = f"{scene_plan.get('SCENE', '')} {scene_plan.get('DESCRIPTION', '')} {scene_plan.get('summary', '')}".lower()
-        
-        advice = []
-        
-        # 1. Content Analysis -> Layout Suggestion
-        if any(w in scene_desc for w in ['result', 'performance', 'accuracy', 'table', 'chart', 'graph']):
-             advice.append("Detected 'Results' content: Consider a 'full_fig_with_callouts' or 'two_row_charts' layout. Use builds to highlight specific data points or rows in the table.")
-        elif any(w in scene_desc for w in ['method', 'architecture', 'model', 'diagram', 'pipeline']):
-             advice.append("Detected 'Methodology' content: Consider a 'full_fig_with_callouts' layout to show the pipeline. Use builds to trace the data flow through the model.")
-        elif any(w in scene_desc for w in ['intro', 'motivation', 'problem', 'challenge']):
-             advice.append("Detected 'Motivation' content: Consider a 'two_col_fig_right' layout. Use bullet points on the left to state the problem, with an illustrative figure on the right.")
-        elif any(w in scene_desc for w in ['code', 'algorithm', 'pseudocode']):
-             advice.append("Detected 'Algorithm' content: Use a 'code_snippet' layout. Use builds to highlight lines of code as they are explained.")
-        else:
-             advice.append("General Content: Default to 'two_col_bullets_left' if a figure is available, otherwise 'one_col_bullets'.")
+        narrative_role = scene_plan.get('narrative_role', '').lower()
+        if not narrative_role or narrative_role not in ['introduction', 'method', 'experiments', 'results']:
+            # Fallback to general content analysis if narrative_role is missing or non-standard
+            raise ValueError(f"Invalid narrative_role: {narrative_role}")
 
-        # 2. Retrieve Reference Layout (from similar papers/videos if available)
-        # Placeholder: If we had a granular slide DB, we would query it here.
-        # For now, we inject general "Best Practices" for scientific videography.
-        advice.append("\nReference Best Practices:")
-        advice.append("- Avoid wall-of-text. Max 3-4 bullets per slide.")
-        advice.append("- Sync visual appearance with audio keywords.")
-        advice.append("- Keep it simple. One key idea per slide.")
+        advice = []
+
+        try:
+            # 1. Section-wise retrieval
+            k = self.retrieval_top_k
+            index_dir = Path("data_reference/faiss") / narrative_role
+            if not index_dir.exists():
+                self.workflow_logger.warning(f"FAISS index directory for section '{narrative_role}' at {index_dir} not found. Falling back.")
+                return self._fallback_scene_style(scene_plan)
+            
+            # Use a temporary retriever for the specific section with OpenAI embeddings
+            section_retriever = PaperRetriever(logger=self.workflow_logger, use_openai=True)
+            section_retriever.load_index(index_dir, index_name=f"{narrative_role}.faiss", meta_name="metadata.json")
+            
+            similar_papers = section_retriever.retrieve_similar_papers(
+                pdf_path=self.pdf_path, 
+                k=k
+            )
+            
+            print(f"\n[USER LOG] Top {len(similar_papers)} papers for section '{narrative_role}':")
+            for p in similar_papers:
+                print(f" - {p.get('paper_name', 'Unknown')}")
+            
+            # 2. Extract layouts from metadata
+            layout_descriptions = []
+            durations = []
+            for p in similar_papers:
+                paper_title = p.get('paper_name', '')
+                if paper_title in self.style_db:
+                    meta_path = Path(self.style_db[paper_title])
+                    if meta_path.exists():
+                        with open(meta_path, "r") as f:
+                            meta = json.load(f)
+                            for slide in meta.get("slides", []):
+                                if slide.get("slide_section", "").lower() == narrative_role:
+                                    # Handle duration from t_start/t_end
+                                    duration = slide.get("t_end", 0) - slide.get("t_start", 0)
+                                    if duration > 0:
+                                        durations.append(duration)
+                                    # Handle layout description
+                                    layout_desc = slide.get("layout_structure", {}).get("layout_description", "")
+                                    if layout_desc:
+                                        layout_descriptions.append(layout_desc)
+            
+            if layout_descriptions:
+                advice.append(f"Reference Layouts for '{narrative_role}' section from similar papers:")
+                sampled_descriptions = random.sample(layout_descriptions, min(5, len(layout_descriptions)))
+                for i, desc in enumerate(sampled_descriptions):
+                    advice.append(f"- Example {i+1}: {desc}")
+                
+                if durations:
+                    avg_dur = sum(durations) / len(durations)
+                    min_dur = min(durations)
+                    max_dur = max(durations)
+                    advice.append(f"\nDuration statistics for this section (from references): min={min_dur:.1f}s, max={max_dur:.1f}s, avg={avg_dur:.1f}s.")
+            else:
+                self.workflow_logger.warning(f"No layout descriptions found in style DB for section '{narrative_role}'. Falling back.")
+                return self._fallback_scene_style(scene_plan)
+
+        except Exception as e:
+            self.workflow_logger.warning(f"Scene retrieval failed: {e}")
+            import traceback
+            self.workflow_logger.error(traceback.format_exc())
+            return self._fallback_scene_style(scene_plan)
+        
+        return "\n".join(advice)
+
+    def _fallback_scene_style(self, scene_plan: dict) -> str:
+        """Standard template fallback when retrieval fails."""
+        self.workflow_logger.info("Falling back to standard template based on section.")
+        # Re-extract descriptive keywords for fallback
+        # First check stage1 extract? No, use plan
+        scene_desc = f"{scene_plan.get('summary', '')} {scene_plan.get('title', '')}".lower()
+        advice = ["WARNING: Retrieval-based style advice unavailable. Using standard template."]
+        
+        if any(w in scene_desc for w in ['result', 'performance', 'accuracy', 'table', 'chart', 'graph']):
+             advice.append("Detected 'Results' content: Consider a 'full_fig_with_callouts' or 'two_row_charts' layout.")
+        elif any(w in scene_desc for w in ['method', 'architecture', 'model', 'diagram', 'pipeline']):
+             advice.append("Detected 'Methodology' content: Consider a 'two_col_fig_left' layout to show the architecture.")
+        else:
+             advice.append("General Content: Default to 'two_col_bullets_left' or 'one_col_bullets'.")
         
         return "\n".join(advice)
 
@@ -442,34 +527,18 @@ class Preacher:
                 self.high_plan = file.read()
         else:
             self.high_plan = self.high_planning()
-
+            
         # 2. Parse High Plan
         self.workflow_logger.info("=" * 50)
         self.workflow_logger.info("Step 2: Parsing high-level plan...")
         self.workflow_logger.info("=" * 50)
 
-        self.high_plan_list = _load_json_dict(self.high_plan)
-
-        # Handle double-serialized cache: json.dump wraps a string in quotes
-        if self.high_plan_list is None or isinstance(self.high_plan_list, str):
-            try:
-                unwrapped = json.loads(self.high_plan) if isinstance(self.high_plan, str) else self.high_plan
-                self.high_plan_list = _load_json_dict(unwrapped)
-            except Exception:
-                pass
-
-        # Handle dict-wrapped plans (e.g. {"scenes": [...]})
-        if isinstance(self.high_plan_list, dict):
-            for v in self.high_plan_list.values():
-                if isinstance(v, list):
-                    self.high_plan_list = v
-                    break
-
-        if not isinstance(self.high_plan_list, list):
-            raise ValueError(f"High plan parsing failed: expected list, got {type(self.high_plan_list)}. Raw: {str(self.high_plan)[:200]}")
+        # Parse string into list using the formalized parser
+        self.high_plan_list = self.setting_plan_format(self.high_plan, step="high")
 
         self.workflow_logger.info(f"Parsed {len(self.high_plan_list)} scenes from high plan.")
 
+        # TODO: Should be done as part of high level plan. and title details should be decided in subseqeunt stages accordingly
         # 2b. Build and prepend title scene
         self.workflow_logger.info("=" * 50)
         self.workflow_logger.info("Step 2b: Building title page scene...")
@@ -700,7 +769,7 @@ class Preacher:
     def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
 
-        style_context = self.retrieve_global_style()
+        style_context = ""#self.retrieve_global_style()
         if self.with_reflection:
             high_planning_success=False
             iter=0
@@ -708,18 +777,17 @@ class Preacher:
             high_plan=None
             while high_planning_success == False and (iter < self.max_high_plan_iteration):
                 high_plan = self.high_plan_by_llm(style_context, eval_results, high_plan)
-                high_plan_legal = self.setting_plan_format(high_plan,step="high")
-                high_planning_success, eval_results = self.high_evaluate_by_llm(high_plan_legal)
+                high_planning_success, eval_results = self.high_evaluate_by_llm(high_plan)
                 iter += 1
         else:
             high_plan = self.high_plan_by_llm(style_context)
-            high_plan_legal = self.setting_plan_format(high_plan, step="high")
-        self.workflow_logger.info(f"High Level Plan: {high_plan_legal}")
+        self.workflow_logger.info(f"High Level Plan: {high_plan}")
         # with open(self.high_plan_path, 'w') as file:
-        #     file.write(high_plan_legal)
+        #     file.write(high_plan)
+
         with open(self.high_plan_path, 'w', encoding='utf-8') as f:
-            json.dump(high_plan_legal, f, ensure_ascii=False, indent=2)
-        return high_plan_legal
+            json.dump(high_plan, f, ensure_ascii=False, indent=2)
+        return high_plan
     
     def high_plan_by_llm(self, style_context, eval_results=None, high_plan=None) -> str:
         if eval_results:
@@ -787,31 +855,70 @@ class Preacher:
                 content_summary = json.load(f)
         else:
             self.workflow_logger.info(f"  Stage 1: Extracting content from paper...")
-            content_summary = self.content_extract_by_llm(part_plan)
+            past_contents = []
+            for past_idx in range(max(0, self.scene_idx - 2), self.scene_idx):
+                past_file = self.log_dir / f"content_{past_idx}.json"
+                if os.path.exists(past_file):
+                    try:
+                        with open(past_file, "r") as f:
+                            past_contents.append(json.load(f))
+                    except Exception:
+                        pass
+            content_summary = self.content_extract_by_llm(part_plan, past_contents)
             with open(content_file, "w") as f:
                 json.dump(content_summary, f, indent=4)
         
-        # ── Stage 2: Style Planning ──
+        # ── Stage 2: Style Planning (Layout) ──
         style_file = self.log_dir / f"style_{self.scene_idx}.json"
         if os.path.exists(style_file):
             self.workflow_logger.info(f"  Stage 2: Style plan already cached. Loading.")
             with open(style_file, "r") as f:
                 style_plan = json.load(f)
         else:
-            self.workflow_logger.info(f"  Stage 2: Planning style and layout...")
-            # TODO: Replace with section-level retrieval from top-k papers
+            self.workflow_logger.info(f"  Stage 2: Planning style/layout...")
             style_advice = self.retrieve_scene_style(part_plan)
             style_plan = self.style_plan_by_llm(part_plan, content_summary, style_advice)
             with open(style_file, "w") as f:
                 json.dump(style_plan, f, indent=4)
         
-        # ── Stage 3: Low-Level Content Drafting ──
-        self.workflow_logger.info(f"  Stage 3: Drafting content (bullets, audio, figures)...")
-        content_draft = self.low_plan_by_llm(part_plan, content_summary, style_plan)
+        # ── Stage 3: Low-Level Content Drafting (and Duration) ──
+        low_file = self.log_dir / f"low_{self.scene_idx}.json"
+        if os.path.exists(low_file):
+            self.workflow_logger.info(f"  Stage 3: Low-level draft already cached. Loading.")
+            with open(low_file, "r") as f:
+                content_draft = json.load(f)
+        else:
+            self.workflow_logger.info(f"  Stage 3: Drafting content and deciding flexible duration...")
+            duration_stat = part_plan.get("duration_stat", {"min": 5.0, "max": 15.0, "avg": 8.0})
+            
+            # Fetch past content draft to avoid repetition in drafting
+            past_contents = []
+            if self.scene_idx > 0:
+                past_file = self.log_dir / f"low_{self.scene_idx - 1}.json"
+                if os.path.exists(past_file):
+                    try:
+                        with open(past_file, "r") as f:
+                            past_contents.append(json.load(f))
+                    except Exception:
+                        pass
+                        
+            content_draft = self.low_plan_by_llm(part_plan, content_summary, style_plan, duration_stat, past_contents)
+            with open(low_file, "w") as f:
+                json.dump(content_draft, f, indent=4)
         
         # ── Stage 4: Style Refinement (assign content to builds) ──
-        self.workflow_logger.info(f"  Stage 4: Assigning content to builds...")
-        final_refined = self.style_refine_by_llm(content_draft, style_plan)
+        refine_file = self.log_dir / f"refine_{self.scene_idx}.json"
+        if os.path.exists(refine_file):
+            self.workflow_logger.info(f"  Stage 4: Refined plan already cached. Loading.")
+            with open(refine_file, "r") as f:
+                final_refined = json.load(f)
+        else:
+            self.workflow_logger.info(f"  Stage 4: Assigning content to builds...")
+            final_refined = self.style_refine_by_llm(content_draft, style_plan)
+            # Ensure duration_sec is carried over
+            final_refined["time_allocation_sec"] = content_draft.get("duration_sec", 8.0)
+            with open(refine_file, "w") as f:
+                json.dump(final_refined, f, indent=4)
         
         # ── Merge everything into final plan ──
         merged_plan = part_plan.copy()
@@ -823,25 +930,41 @@ class Preacher:
         }
         # Merge refined output (elements, builds, style, audio_content, etc.)
         merged_plan.update(final_refined)
-        # Add source and time_cost from content draft
+        # Add source, audio_content, prompt and duration from content draft
         merged_plan["source"] = content_draft.get("source", [])
-        merged_plan["time_cost"] = content_draft.get("time_cost", str(part_plan.get("time_allocation_sec", 8)))
+        merged_plan["time_allocation_sec"] = content_draft.get("duration_sec", merged_plan.get("time_allocation_sec", 8.0))
         merged_plan["audio_content"] = content_draft.get("audio_content", "")
         merged_plan["prompt"] = content_draft.get("prompt", "")
         
         self.final_plan[self.scene_idx] = merged_plan
         
-        # Save final plan
+        # Save final combined plan
         with open(plan_file, "w") as file:
             json.dump(self.final_plan[self.scene_idx], file, indent=4)
         self.workflow_logger.info(f"  Scene {self.scene_idx}: All 4 stages complete. Saved to {plan_file}")
     
     # ── Individual stage methods ──
     
-    def content_extract_by_llm(self, part_plan) -> dict:
+    def content_extract_by_llm(self, part_plan, past_contents=None) -> dict:
         """Stage 1: Extract relevant content from the paper for this scene."""
+        memory_context = ""
+        if past_contents:
+            memory_context = "## Previous Scenes Memory\n"
+            memory_context += "The following content was extracted for the immediately preceding scenes. **This is provided as a memory of what the audience has JUST seen.**\n"
+            memory_context += "You MUST NOT repeat the claims, figures, tables, or equations from these previous scenes in your current extraction, to ensure the presentation maintains forward momentum without redundant slides.\n"
+            memory_context += "If you must reference the exactly same figure/table, the 'relevance' MUST be clearly unique to avoid narrative duplication.\n\n"
+            for past in past_contents:
+                subset = {
+                    "extracted_content": past.get("extracted_content", ""),
+                    "key_figures": past.get("key_figures", []),
+                    "key_tables": past.get("key_tables", []),
+                    "key_equations": past.get("key_equations", [])
+                }
+                memory_context += json.dumps(subset, indent=2) + "\n"
+
         prompt = prompts.content_extraction_prompt.format(
-            scene_json=json.dumps(part_plan, indent=2)
+            scene_json=json.dumps(part_plan, indent=2),
+            memory_context=memory_context
         )
         raw = eval(self.planner(
             prompt=prompt,
@@ -872,12 +995,27 @@ class Preacher:
             raise ValueError(f"Style planning failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
         return parsed
     
-    def low_plan_by_llm(self, part_plan, content_summary, style_plan) -> dict:
+    def low_plan_by_llm(self, part_plan, content_summary, style_plan, duration_stat, past_contents=None) -> dict:
         """Stage 3: Draft content (bullets, audio, figures) within the decided layout."""
+        
+        memory_context = ""
+        if past_contents:
+            memory_context = "## Previous Content\n"
+            memory_context += "The following content was drafted for the immediately preceding scenes.\n"
+            memory_context += "You MUST NOT repeat the exact text content or claims from these previous scenes in your current draft.\n\n"
+            for past in past_contents:
+                subset = {
+                    "bullets": past.get("bullets", []),
+                    "audio_content": past.get("audio_content", "")
+                }
+                memory_context += json.dumps(subset, indent=2) + "\n"
+
         prompt = prompts.low_level_planning_prompt.format(
             content_summary=json.dumps(content_summary, indent=2),
             style_plan=json.dumps(style_plan, indent=2),
             scene_context=json.dumps(part_plan, indent=2),
+            duration_stat=json.dumps(duration_stat, indent=2),
+            memory_context=memory_context,
         )
         raw = eval(self.planner(
             prompt=prompt,
@@ -892,14 +1030,14 @@ class Preacher:
     
     def style_refine_by_llm(self, content_draft, style_plan) -> dict:
         """Stage 4: Decide builds from scratch, assign drafted content to build steps."""
-        time_cost = content_draft.get("time_cost", "8")
+        total_time_sec = content_draft.get("duration_sec", 8.0)
         prompt = prompts.style_refinement_prompt.format(
             content_draft=json.dumps(content_draft, indent=2),
             layout_info=json.dumps({
                 "layout_template": style_plan.get("layout_template", ""),
                 "layout_regions": style_plan.get("layout_regions", {}),
                 "has_figure": style_plan.get("has_figure", False),
-                "total_time_sec": time_cost,
+                "total_time_sec": total_time_sec,
             }, indent=2),
         )
         raw = eval(self.planner(
@@ -930,22 +1068,14 @@ class Preacher:
         if not os.path.isdir(self.curr_scene_dir):
             self.curr_scene_dir.mkdir()
         style = self.final_plan[scene_idx]["style"].lower()
-        if "general" in style.lower() :
-            video_path=self.general_work(scene_idx)
-        elif "prof" in style.lower() or "scie" in style.lower() or "math" in style.lower() or "mol" in style.lower():
-            video_path=self.professional_work(scene_idx)
-        elif "cap" in style.lower():
-            video_path=self.captioning_work(scene_idx)
-        elif "slides" in style.lower():
-            if hasattr(self, 'slide_renderer') and self.slide_renderer:
-                try:
-                    video_path = self.slide_renderer.render_scene(self.final_plan[scene_idx], scene_idx)
-                except Exception as e:
-                    self.workflow_logger.error(f"SlideRenderer failed: {e}. Falling back to legacy slides_work.")
-                    video_path=self.slides_work(scene_idx)
-            else:
-                video_path=self.slides_work(scene_idx)
-        else: print("error: Please check the style file")
+        if hasattr(self, 'slide_renderer') and self.slide_renderer:
+            try:
+                video_path = self.slide_renderer.render_scene(self.final_plan[scene_idx], scene_idx)
+            except Exception as e:
+                raise Exception(f"SlideRenderer failed: {e}")
+        else:
+            raise Exception("SlideRenderer not found. Cannot generate video.")
+
         return video_path
 
     def math_single_work(self, plan, eval_results=None, code_str=None):
@@ -1001,218 +1131,7 @@ class Preacher:
                 ))
                 code_str = extract_code(code_str)
         return code_str, video_path
-    
-    def professional_work(self, scene_idx):
-        video_success = False
-        iter=0
-        plan = self.final_plan[scene_idx]
-        code_str = None
-        eval_results = None
-        
-        self.curr_video_path = self.curr_scene_dir/"video.mp4"
-        
-        style_ = eval(
-            self.evaluator(prompt=prompts.pro_classify_prompt+plan["prompt"],))
-        if "math" in style_.lower():
-            if os.path.exists(self.curr_video_path):
-                  pass
-            else:
-                while video_success == False and iter < self.max_generate_iteration:
-                    code_str, video_path = self.math_single_work(plan,eval_results,code_str)
-                    video_success, eval_results = self.video_evaluate_by_mllm(plan, video_path, type='video')
-                    iter += 1
-                video = VideoFileClip(video_path)
-                video.write_videofile(str(self.curr_video_path))
-        elif "mol" in style_.lower():
-            if os.path.exists(self.curr_video_path):
-                pass
-            else:
-                
-                prompt_mol = f'Please return the most related name  "X" of the protein in {plan["source"]} and {plan["prompt"]}. Keep it concise and breif."+" Return the name ONLY'
-                
-                pdb_name = eval(
-                    self.evaluator(
-                    prompt=prompt_mol,))
-                audio_mol = f'Optimize the {plan["audio_content"]} to transform it into an introduction related to molecular biology, mentioning the protein {pdb_name}, without exceeding 50 words. Return the UPDATED prompt ONLY'
-                self.final_plan[scene_idx]["audio_content"] = eval(
-                    self.evaluator(
-                    prompt=audio_mol,))
-                #pdb_name = _load_json_dict(pdb_name)['name']
-                ids = name_to_pdb_ids(pdb_name)
-                if not ids:
-                    print("[MANUAL] no PDB ID, please check:", pdb_name)
-                    return
-                pdb_id=ids[0]
-                pdb_path = os.path.join(self.curr_scene_dir, f"{pdb_id.lower()}.pdb")
-                if not os.path.exists(pdb_path):
-                    download_pdb(pdb_id, pdb_path)
-                if pdb_path:
-                    print(f"[DONE] {pdb_id} is saved at  {pdb_path}")
-                    generate_mol_animation(pdb_path, self.curr_video_path)
-                else:
-                    url = f"https://files.rcsb.org/download/{pdb_id.upper()}.pdb"
-                    print(f"[MANUAL] please download and generate by yourself:{url}")
-                    
-                #video = VideoFileClip(self.curr_video_path)
-                #video.write_videofile(self.curr_video_path)
-        self.curr_audio_path = self._ensure_audio(self.final_plan[scene_idx]["audio_content"])
-        self.final_video_path = self.curr_scene_dir/"scene{}.mp4".format(scene_idx)
-        if "time_cost" in plan:
-            time = plan["time_cost"]
-        else:
-            time = '8'
-        merge_video_audio(self.curr_video_path, self.curr_audio_path, time,self.final_video_path)
-        return self.final_video_path
 
-    def general_single_work(self, plan, eval_results=None):
-        if eval_results==None:
-            prompt_r = " Please use {} as the materials to depict a video scene that a diffusion model can understand and generate.".format( plan["prompt"])
-            plan["prompt"] = eval(
-            self.art_agent(
-                    prompt=prompt_r+ "\n" + plan["prompt"],
-            ))
-        else:
-            plan["prompt"] = eval(
-            self.art_agent(
-                    prompt=eval_results + "\n" + plan["prompt"],
-            ))
-        video_url = self.general_video_tool.query(plan["prompt"])
-        return video_url
-    
-    def general_work(self, scene_idx):
-        video_success = False
-        iter=0
-        plan = self.final_plan[scene_idx]
-        eval_results = None
-        self.final_video_path = self.curr_scene_dir/"scene{}.mp4".format(scene_idx)
-        self.curr_video_path = self.curr_scene_dir/"video.mp4".format(scene_idx)
-        self.curr_audio_path = self._ensure_audio(plan["audio_content"])
-        if os.path.exists(self.curr_video_path):
-            video_path=self.curr_video_path
-            pass
-        else:
-            while video_success == False and iter < self.max_generate_iteration:
-                video_path = self.curr_scene_dir/"test{}.mp4".format(iter)
-                if not os.path.exists(video_path):
-                    video_url = self.general_single_work(plan, eval_results)
-                    video_path = download_file(video_url, video_path)
-                video_success, eval_results = self.video_evaluate_by_mllm(plan, video_path, type='video')
-                iter += 1
-        if "time_cost" in plan:
-            time = plan["time_cost"]
-        else:
-            time = '8'
-        merge_video_audio(video_path, self.curr_audio_path, time, self.final_video_path)
-        return self.final_video_path
-    
-    def captioning_single_work(self, plan, eval_results=None):
-        if eval_results==None:
-            prompt_r = " Please use {} and {} as the materials to depict a image scene that a diffusion model can understand and generate. Return the prompt ONLY".format(plan.get("scenario", ""), plan["prompt"])
-            plan["prompt"] = eval(
-            self.art_agent(
-                    prompt=prompt_r+ "\n" + plan["prompt"],
-            ))
-        else:
-            plan["prompt"] = eval(
-            self.art_agent(
-                    prompt=eval_results + "\n" + "\n" +"Please provide new prompt to depict a image scene. Be relative to" +  plan["prompt"]+ "Return the prompt ONLY.",
-            ))
-        image_url= self.captioning_tool.query(plan["prompt"])
-        return image_url
-    
-    def captioning_work(self, scene_idx):
-        video_success = False
-        iter=0
-        plan = self.final_plan[scene_idx]
-        eval_results = None
-        
-        self.curr_image_path = self.curr_scene_dir/"image.png"
-        self.curr_audio_path = self._ensure_audio(plan["audio_content"])
-        if os.path.exists(self.curr_image_path):
-            pass
-        else:
-            while video_success == False and iter < self.max_generate_iteration:
-                image_path = self.curr_scene_dir/"test{}.png".format(iter)
-                if not os.path.exists(image_path):
-                    image_url = self.captioning_single_work(plan, eval_results)
-                    image_path = download_file(image_url, image_path)
-                video_success, eval_results = self.video_evaluate_by_mllm(plan, [image_path], type='image')
-                iter += 1
-            with Image.open(image_path) as img:
-                img.save(self.curr_image_path)
-        
-        self.final_video_path = self.curr_scene_dir/"scene{}.mp4".format(scene_idx)
-        if "time_cost" in plan:
-            time = plan["time_cost"]
-        else:
-            time = '8'
-        image_to_video(self.curr_image_path, self.curr_audio_path, time, self.final_video_path)
-        return self.final_video_path
-
-
-    
-    def slides_single_work(self, scene_idx, plan, image_path, eval_results=None):
-        if eval_results==None and (os.path.exists(image_path) is False):
-            prompt_r = (
-                f"Please return the type and index of the {plan['source']} in the PDF "
-                "with the dict: {'type': TABLE/IMAGE, 'number': INT}"
-                "where a is TABLE or IMAGE, and b is its index."
-            )
-            crop_dict = eval(
-            self.planner(
-                prompt=prompt_r,
-                pdf_path=Path(self.pdf_path),
-            ))
-            result = _load_json_dict(crop_dict)
-            # LLM may return a list of dicts; take the first element
-            if isinstance(result, list):
-                result = result[0] if result else {"type": "IMAGE", "number": 1}
-            image_path = get_specific_element(self.pdf_path, result['type'], result['number'], image_path)
-            
-        else:
-            if not eval_results:
-                eval_results = ''
-            # Fallback to summary if prompt is missing
-            old_prompt = plan.get('prompt', plan.get('summary', ''))
-            self.final_plan[scene_idx]["prompt"] = eval(
-            self.planner(
-                prompt= 'With this reason'+ eval_results+"Provide a better prompt"+eval_results+"\n Old prompt is"+old_prompt +"\n RETURN new prompt ***ONLY***",
-                pdf_path=Path(self.pdf_path),
-            ))
-
-        return image_path
-        
-    def slides_work(self, scene_idx):
-        video_success = False
-        iter=0
-        image_path =  self.curr_scene_dir/"image{}.png".format(iter)
-        plan = self.final_plan[scene_idx]
-        eval_results = None
-        self.final_video_path = self.curr_scene_dir/"scene{}.mp4".format(scene_idx)
-        if os.path.exists(self.final_video_path):
-            return self.final_video_path
-        self.curr_image_path = self.curr_scene_dir/"image.png"
-        self.curr_audio_path = self._ensure_audio(plan["audio_content"])
-        if os.path.exists(self.curr_image_path):
-            image_path = self.curr_image_path
-            pass
-        else:
-            while video_success == False and iter < self.max_generate_iteration:
-                image_path = self.curr_scene_dir/"image{}.png".format(0)
-                self.slides_single_work(scene_idx, plan, image_path, eval_results)
-                video_success, eval_results = self.video_evaluate_by_mllm(plan, [image_path], type='image') 
-                iter += 1
-            #with Image.open(self.curr_image_path) as img:
-                #img.save(self.curr_image_path)
-            self.curr_image_path = create_ppt_style_image(image_path, plan.get('prompt', ''), self.curr_image_path)
-        
-        if "time_cost" in plan:
-            time = plan["time_cost"]
-        else:
-            time = '8'
-        image_to_video(self.curr_image_path, self.curr_audio_path, time, self.final_video_path)
-        return self.final_video_path
-        
     def video_evaluate_by_mllm(self, plan, video_path, type='video'):
         if type=='video':
             img_list = extract_key_frames(video_path)
@@ -1240,8 +1159,29 @@ class Preacher:
         return success, eval_results
     
     def setting_plan_format(self, plan, step="low"):
-        # Deprecated: Now we rely on strict JSON prompting
-        # But high_planning still uses logic that expects a string return
+        if step == "high":
+            # Parse the raw string into a list of scenes
+            parsed_plan = _load_json_dict(plan)
+
+            # Handle double-serialized cache: json.dump wraps a string in quotes
+            if parsed_plan is None or isinstance(parsed_plan, str):
+                try:
+                    unwrapped = json.loads(plan) if isinstance(plan, str) else plan
+                    parsed_plan = _load_json_dict(unwrapped)
+                except Exception:
+                    pass
+
+            # Handle dict-wrapped plans (e.g. {"scenes": [...]})
+            if isinstance(parsed_plan, dict):
+                for v in parsed_plan.values():
+                    if isinstance(v, list):
+                        parsed_plan = v
+                        break
+
+            if not isinstance(parsed_plan, list):
+                raise ValueError(f"High plan parsing failed: expected list, got {type(parsed_plan)}. Raw: {str(plan)[:200]}")
+                
+            return parsed_plan
         return plan
 
 

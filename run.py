@@ -22,7 +22,7 @@ project_root = Path(__file__).resolve().parent
 sys.path.append(str(project_root))
 
 from tools.retriever import PaperRetriever
-from tools.build_style_db import build_style_db
+from tools.build_style_db_gemini_v2 import build_style_db
 from pipeline.preacher import Preacher
 from utils.logger import get_logger
 
@@ -52,7 +52,8 @@ def ensure_faiss_index(logger):
 
 def ensure_style_db(logger):
     """Build style DB if it doesn't already exist."""
-    style_db_summary = project_root / "data_reference" / "style_db" / "db_summary.json"
+    style_db_dir = project_root / "data_reference" / "style_db_refined_final"
+    style_db_summary = style_db_dir / "db_summary.json"
     
     if style_db_summary.exists():
         logger.info(f"Style DB already exists at {style_db_summary}. Skipping build.")
@@ -67,7 +68,16 @@ def ensure_style_db(logger):
         raise FileNotFoundError(f"No videos found in {video_dir}. Cannot build style DB.")
     
     logger.info(f"Building style DB from {len(videos)} videos...")
-    build_style_db()
+    
+    # ensure output dir
+    style_db_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Call builder
+    build_style_db(
+        input_dir=str(video_dir),
+        output_dir=str(style_db_dir)
+    )
+    
     logger.info(f"Style DB built at {style_db_summary}")
     return style_db_summary
 
@@ -105,22 +115,24 @@ def main(
         sys.exit(1)
 
     # Step 1: Ensure FAISS index
-    logger.info("=" * 50)
-    logger.info("Step 1: Checking FAISS retrieval index...")
-    logger.info("=" * 50)
-    ensure_faiss_index(logger)
+    # logger.info("=" * 50)
+    # logger.info("Step 1: Checking FAISS retrieval index...")
+    # logger.info("=" * 50)
+    # ensure_faiss_index(logger) #TODO: it should also check for section wise faiss index which will be created soon.
 
     # Step 2: Ensure Style DB
-    logger.info("=" * 50)
-    logger.info("Step 2: Checking style database...")
-    logger.info("=" * 50)
-    ensure_style_db(logger)
+    # logger.info("=" * 50)
+    # logger.info("Step 2: Checking style database...")
+    # logger.info("=" * 50)
+    # ensure_style_db(logger) #TODO: it should also check for style_db_refined_final
 
     # Step 3: Run Preacher agent
     logger.info("=" * 50)
     logger.info("Step 3: Running Preacher agent...")
     logger.info("=" * 50)
 
+
+    # TODO: change code structure of Preacher. 
     agent = Preacher(
         input_path=input_path,
         output_dir=output_dir,

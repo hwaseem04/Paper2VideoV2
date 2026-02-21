@@ -23,13 +23,20 @@ class Qwentts:
         dashscope.api_key = self.api_key
     def return_audio(self, text):
         model = self.cfg["alibaba"].get("VOICE_MODEL", "qwen-tts")
-        voice = self.cfg["alibaba"].get("VOICE", "Cherry")
+        voice = self.cfg["alibaba"].get("VOICE", "Aiden")
+        speech_rate = self.cfg["alibaba"].get("speech_rate", 1.0)
+        
+        # Determine if model supports 'speech_rate' parameter directly
+        # For qwen-tts-v2 and later, speech_rate is supported.
+        # For some specific new models, it might be 'parameters' dict.
+        # Based on DashScope docs for python SDK, typically passed as speech_rate
         
         response = dashscope.audio.qwen_tts.SpeechSynthesizer.call(
             model=model,
             api_key=self.api_key,
             text=text,
             voice=voice,
+            speech_rate=speech_rate
         )
         
         if response.status_code == 200:

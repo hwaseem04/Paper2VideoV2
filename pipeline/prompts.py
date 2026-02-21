@@ -1,20 +1,19 @@
 system_message = "You are an expert in reading academic papers and creating video summaries based on them. "
 
-math_prompt = "You are an expert in reading academic papers and creating video summaries based on them. "
-
 high_level_planning_prompt = """Given a paper, please design a video summary. 
-The number of scenes should be based on the RECOMMENDATION in the style context below.
+The number of scenes should be based on the RECOMMENDATION in the style context below. 
+
+**IMPORTANT**:  You MUST increase or decrease the scene count if the paper contains significantly more (or fewer) major contributions, extensive results, or complex technical analysis that merit individual focus. Ensure every major/interesting contribution and result is covered.
 
 {style_context}
 
 Requirements: 
-1. Each scene must include strong relationship between last and next scene.
-2. No overlapping content between scenes.
+1. Each scene must include strong relationship between last and next scene, but there must be no overlap of content.
+2. STRICTLY No overlapping content between scenes.
 3. Collectively present all key findings in a coherent narrative.
 4. Maintain high technical accuracy and professionalism.
-5. Allow 5 to 10 seconds of video per scene.
-6. Deliver only core content; omit acknowledgements and references.
-7. Do NOT create a title/introduction scene. Scene 0 (title page with paper title, authors, logos) is auto-generated separately. Start your scenes from the paper's technical content.
+5. Deliver only core content; omit acknowledgements and references.
+6. Do NOT create a title/introduction scene. Scene 0 (title page with paper title, authors, logos) is auto-generated separately. Start your scenes from the paper's technical content.
 
 You MUST output the scenes in the following STRICT JSON format (list of objects):
 ```json
@@ -22,22 +21,20 @@ You MUST output the scenes in the following STRICT JSON format (list of objects)
   {{
     "scene_id": 1,
     "title": "Brief title",
-    "summary": "Scene description and content summary.",
+    "summary": "content covered in this scene",
     "paper_section": "Introduction/Method/etc",
-    "narrative_role": "problem/solution/result/etc",
-    "time_allocation_sec": 5,
-    "reference_style_examples": []
+    "narrative_role": "one of [introduction/experiments/method/results]",
+    "duration_stat": {{
+      "min": 5.0,
+      "max": 15.0,
+      "avg": 8.0
+    }}
   }},
   ...
 ]
 ```
-Do NOT just acknowledge this request. Generate the actual scene list NOW. Ensure strictly valid JSON."""
-
-high_level_evaluate_prompt = "Below are the video-summary scenes I designed based on the corresponding paper. Please check it with answering questions: Do these scenes cover all the key points the original paper intends to convey? Do these scenes avoid overlapping content and redundancy? Do these scenes form a coherent and correct story? Please answer “YES/NO.” If you answer “NO” (i.e., issues exist), provide suggestions for improvement. Current plan:"
-
-high_level_replanning_prompt = "The above are the scenes you previously designed. Please modify the scenes accordingly based on the following feedback while keeping the format unchanged:"
-
-high_plan_format_prompt = " The next paragraph of TEXT will provide descriptions for multiple scenes. I need you to fill the \"***\" section of the dict LIST with the TEXT. Please output the LIST only. LIST:[{ \"SCENE1\": \"******\", \"DESCRIPTION\": \"******\", \"TIME_ALLOCATION\": \"******\"},{ \"SCENE2\": \"******\", \"DESCRIPTION\": \"******\", \"TIME_ALLOCATION\": \"******\"}...] TEXT:"
+Do NOT just acknowledge this request. Generate the actual scene list NOW. Ensure strictly valid JSON.
+Map the paper_section to one of the 4 sections in narrative_role (Introduction, Method, Experiments, Results)."""
 
 ### ─────────────────────────────────────────────────
 ### Stage 1: Content Extraction
@@ -48,6 +45,8 @@ You are an expert at reading academic papers and extracting key content for pres
 
 Given the following high-level scene description:
 {scene_json}
+
+{memory_context}
 
 Read the paper carefully and extract ALL relevant content from the section(s) referenced in this scene.
 
@@ -84,7 +83,8 @@ Read the paper carefully and extract ALL relevant content from the section(s) re
 2. **key_figures** must list figures by their exact label in the paper (e.g., "Figure 1", "Fig. 2").
 3. If no figures/tables/equations are relevant, use empty lists `[]`.
 4. **extracted_content** must be detailed enough to create 2-4 meaningful bullet points from it.
-5. Output ONLY valid JSON, no markdown fences, no explanation.
+5. **Memory Context**: The `Previous Scenes Memory` (if provided) shows what was ALREADY covered. You MUST NOT repeat its text content, claims, figures, tables, or equations. CRITICAL: Even if you MUST reference the same figure/table, the text content (`extracted_content`) and `relevance` MUST still be completely DIFFERENT.
+6. Output ONLY valid JSON, no markdown fences, no explanation.
 """
 
 ### ─────────────────────────────────────────────────
@@ -114,7 +114,6 @@ Pick the layout template that best suits the content. Common templates include (
 - `two_col_fig_right` — Bullets on left, figure on right. Best for: motivation slides with illustrative figures.
 - `full_fig_with_callouts` — Large figure with small bullet callouts below. Best for: results, data visualizations.
 - `one_col_bullets` — Full-width bullets, no figure. Best for: text-heavy overview or summary slides.
-- `title_only` — Just a title, possibly with a subtitle. Best for: section transitions.
 
 If none of these fit, invent a descriptive template name and define its regions.
 
@@ -156,13 +155,16 @@ The layout has been decided:
 Scene context:
 {scene_context}
 
-Your job is to **draft the actual content** (title, bullets, audio, figure choice) that fits into this layout. You do NOT decide the layout — that is already set. You also do NOT decide builds or animations — those will be planned later based on your drafted content.
+{memory_context}
+
+Your job is to **draft the actual content** (title, bullets, audio, figure choice, and duration) that fits into this layout. You do NOT decide the layout — that is already set. You also do NOT decide builds or animations — those will be planned later based on your drafted content.
 
 ## OUTPUT FORMAT — Return ONLY valid JSON:
 
 {{
   "title": "A clear, concise slide title",
-  "audio_content": "Full narration transcript for this entire scene. Should be natural, conversational, and cover all key points. Keep it within the time budget.",
+  "audio_content": "Full narration transcript for this entire scene. Should be natural, conversational, and cover all key points. The duration should be based on the length of this transcript.",
+  "duration_sec": 8.5,
   "bullets": [
     "First concise bullet point",
     "Second concise bullet point",
@@ -174,7 +176,6 @@ Your job is to **draft the actual content** (title, bullets, audio, figure choic
     "caption": "Brief caption describing the figure"
   }},
   "source": ["Figure 1", "Section 3.1"],
-  "time_cost": "8",
   "prompt": "Visual description of the scene for generation"
 }}
 
@@ -182,8 +183,8 @@ Your job is to **draft the actual content** (title, bullets, audio, figure choic
 1. **Number of bullets**: Write 2-4 concise, impactful bullets that cover the key points from the extracted content.
 2. **Figure reference**: ONLY use figures listed in the content summary's `key_figures`. Do NOT invent figure references. If the style plan has `has_figure: false`, omit `figure` entirely.
 3. **Bullet text**: Each bullet should be concise (under 15 words preferred), impactful, and directly derived from `extracted_content`. Not a copy — a focused summary.
-4. **audio_content**: Natural narration covering all bullet points. Keep within the time budget (about 2-3 words per second).
-5. **time_cost**: Must be a string (e.g., "8") matching the high-level plan's time allocation.
+4. **audio_content**: Natural narration covering all bullet points. 
+5. **duration_sec**: First, draft the `audio_content`. Then, CALCULATE the duration: `duration_sec = word_count_of_audio / 2.5`. Do NOT guess. If the stats say 8s but you wrote 40 words, `duration_sec` MUST be 16.0.
 6. Output ONLY valid JSON, no markdown fences, no explanation.
 """
 
@@ -267,32 +268,6 @@ Your job is to:
 10. Output ONLY valid JSON, no markdown fences, no explanation.
 """
 
-
-
-low_level_evaluate_prompt = "This is the video summary plan we created for the scene of the part of the paper. Please respond to each of the following questions with either \"YES\" or \"NO\" to determine whether the current plan meets the requirements (if \"NO\", provide the correct answer)."
-
-low_level_replanning_prompt = "The above is the scene style selection plan you designed earlier, but it seems that the following issues have arisen. Please make the corresponding modifications and ensure that the updated version maintains the exact same format as the previous version.:"
-
-low_plan_format_prompt="Fill in the dictionary (***** means blank ) with the given above text. For \"style,\" the blank can only be filled with one of the following options: (Slides, Professional, Talking Heads, Captioning, or General Video). If there is no suitable match, write \"PASS\":{ \"audio_content\": \"******\", \"style\": \"******\", \"source\": \"******\", \" prompt\": \"******\"} Only output this dictionary, no extra content is needed! For example: { \"audio_content\": \"This is the picture from the original paper, which means a lot.\",\"style\": \"Slides\",\"source\": \"Fig.1\",\"prompt\": \"Previous palaeomagnetic investigations using samples from Apollo and Chang'e-5 missions have revealed the Moon's magnetic history. However, these studies were limited to the nearside, leaving the farside largely unexplored.\". \n Make sure that the content replacing \"******\" are strings and does not contain double quotes inside.}"
-
-low_level_evaluate_prompt_list = ["\n Is the video style exactly one of those choices: [Slides, Professional, Talking Heads, Captioning, or General Video] ? \n Do you think the choice of this style is reasonable?", "\n Does the \" audio_ content\" part appear to meet the required time_cost? Avoid overly lengthy text. The time_cost is fixed and cannot be changed. \n Do you think the audio_content is reasonable?","  Only If the video \" style \" is \" slides \", answer: Does the \" source \" part explicitly provide a specific source element (exact table/picture/equation)in the original paper? \n Is the professionalism of the current plan acceptable? \n Only if the video \"style \"  is \" professional \", does the original plan provide a clear mathematical expression or molecular formula so that I can know the content without reading original paper? \n","The \"prompt\" part should be a description of the scenes for the video to be generated. Does the existing \"prompt\" work as a prompt for a generation model (if the style is a General video, Captioning) or as a note to show (if the style is Slides or Professional)?\n"] 
-
-load_table_prompt="Can you return the content of the specific table of the original paper in table fomular? No extra TEXT in output."
-
-pro_classify_prompt = "Is this scene related to mathematical content? If yes, output \"math\". Is this scene related to molecular visualization content? If yes, output \"mol\""
-
-pro_format_prompt = "The code I require does not need to be complete; it only needs to exist as an animation function. Please check if the following code meets my requirements: It should not contain any import statements. It should be simple and within 100 lines! It should start with 'def animate(self):\n    '. It should end with 'self.wait(X)' (where X is a number). Conforms to indentation rules! If it does not meet the requirements, rewrite it in the format I requested. Output the code Only!"
-
-pro_gen_prompt = "Why can't the following code run? Please modify the code and make it generate the correct video. Your result must be understandable by the Python compiler! Conforms to indentation rules. Make it SIMPLE and meaningful! Make sure the code Only output the code!"
-
-pro_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") to determine if the current video meets the requirements while maintaining structural integrity. If the answer is \"NO,\" please provide a reason:Is there visual content (animation) in the bottom left corner of the video? Is the animation in the video reasonable and mathematically strong? Do the visual content and text avoid meanlingless overlap in the video?"
-
-pro_vis_rege = "The code you write has the following issues, please output the updated code ONLY:"
-
-gen_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") to determine if the current video meets the requirements while maintaining structural integrity. If the answer is \"NO,\" please provide a reason:  Does it convey serious subject matter? Is the image filled with vivid scenes rather than meaningless numbers, letters, and symbols? Is the image strongly relevant to the following description?"
-
-slides_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") . Is the following text works well as a caption beneath an image in a PowerPoint slide?  Is the following text explaining the image? Following text:"
-
 ### ─────────────────────────────────────────────────
 ### Title Page Prompts
 ### ─────────────────────────────────────────────────
@@ -370,3 +345,39 @@ IMPORTANT: Vary the placement naturally — do NOT always put logos in the same 
 5. Keep at least 5% margin from all edges.
 6. Output ONLY valid JSON, no markdown fences, no explanation.
 """
+
+
+
+### Old prompts
+
+math_prompt = "You are an expert in reading academic papers and creating video summaries based on them. "
+
+high_plan_format_prompt = " The next paragraph of TEXT will provide descriptions for multiple scenes. I need you to fill the \"***\" section of the dict LIST with the TEXT. Please output the LIST only. LIST:[{ \"SCENE1\": \"******\", \"DESCRIPTION\": \"******\", \"TIME_ALLOCATION\": \"******\"},{ \"SCENE2\": \"******\", \"DESCRIPTION\": \"******\", \"TIME_ALLOCATION\": \"******\"}...] TEXT:"
+
+high_level_evaluate_prompt = "Below are the video-summary scenes I designed based on the corresponding paper. Please check it with answering questions: Do these scenes cover all the key points the original paper intends to convey? Do these scenes avoid overlapping content and redundancy? Do these scenes form a coherent and correct story? Please answer “YES/NO.” If you answer “NO” (i.e., issues exist), provide suggestions for improvement. Current plan:"
+
+high_level_replanning_prompt = "The above are the scenes you previously designed. Please modify the scenes accordingly based on the following feedback while keeping the format unchanged:"
+
+low_level_evaluate_prompt = "This is the video summary plan we created for the scene of the part of the paper. Please respond to each of the following questions with either \"YES\" or \"NO\" to determine whether the current plan meets the requirements (if \"NO\", provide the correct answer)."
+
+low_level_replanning_prompt = "The above is the scene style selection plan you designed earlier, but it seems that the following issues have arisen. Please make the corresponding modifications and ensure that the updated version maintains the exact same format as the previous version.:"
+
+low_plan_format_prompt="Fill in the dictionary (***** means blank ) with the given above text. For \"style,\" the blank can only be filled with one of the following options: (Slides, Professional, Talking Heads, Captioning, or General Video). If there is no suitable match, write \"PASS\":{ \"audio_content\": \"******\", \"style\": \"******\", \"source\": \"******\", \" prompt\": \"******\"} Only output this dictionary, no extra content is needed! For example: { \"audio_content\": \"This is the picture from the original paper, which means a lot.\",\"style\": \"Slides\",\"source\": \"Fig.1\",\"prompt\": \"Previous palaeomagnetic investigations using samples from Apollo and Chang'e-5 missions have revealed the Moon's magnetic history. However, these studies were limited to the nearside, leaving the farside largely unexplored.\". \n Make sure that the content replacing \"******\" are strings and does not contain double quotes inside.}"
+
+low_level_evaluate_prompt_list = ["\n Is the video style exactly one of those choices: [Slides, Professional, Talking Heads, Captioning, or General Video] ? \n Do you think the choice of this style is reasonable?", "\n Does the \" audio_ content\" part appear to meet the required time_cost? Avoid overly lengthy text. The time_cost is fixed and cannot be changed. \n Do you think the audio_content is reasonable?","  Only If the video \" style \" is \" slides \", answer: Does the \" source \" part explicitly provide a specific source element (exact table/picture/equation)in the original paper? \n Is the professionalism of the current plan acceptable? \n Only if the video \"style \"  is \" professional \", does the original plan provide a clear mathematical expression or molecular formula so that I can know the content without reading original paper? \n","The \"prompt\" part should be a description of the scenes for the video to be generated. Does the existing \"prompt\" work as a prompt for a generation model (if the style is a General video, Captioning) or as a note to show (if the style is Slides or Professional)?\n"] 
+
+load_table_prompt="Can you return the content of the specific table of the original paper in table fomular? No extra TEXT in output."
+
+pro_classify_prompt = "Is this scene related to mathematical content? If yes, output \"math\". Is this scene related to molecular visualization content? If yes, output \"mol\""
+
+pro_format_prompt = "The code I require does not need to be complete; it only needs to exist as an animation function. Please check if the following code meets my requirements: It should not contain any import statements. It should be simple and within 100 lines! It should start with 'def animate(self):\n    '. It should end with 'self.wait(X)' (where X is a number). Conforms to indentation rules! If it does not meet the requirements, rewrite it in the format I requested. Output the code Only!"
+
+pro_gen_prompt = "Why can't the following code run? Please modify the code and make it generate the correct video. Your result must be understandable by the Python compiler! Conforms to indentation rules. Make it SIMPLE and meaningful! Make sure the code Only output the code!"
+
+pro_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") to determine if the current video meets the requirements while maintaining structural integrity. If the answer is \"NO,\" please provide a reason:Is there visual content (animation) in the bottom left corner of the video? Is the animation in the video reasonable and mathematically strong? Do the visual content and text avoid meanlingless overlap in the video?"
+
+pro_vis_rege = "The code you write has the following issues, please output the updated code ONLY:"
+
+gen_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") to determine if the current video meets the requirements while maintaining structural integrity. If the answer is \"NO,\" please provide a reason:  Does it convey serious subject matter? Is the image filled with vivid scenes rather than meaningless numbers, letters, and symbols? Is the image strongly relevant to the following description?"
+
+slides_vis_eval = "This is the video we created to introduce the above content, and I would like you to answer the following questions with (\"YES\" or \"NO\") . Is the following text works well as a caption beneath an image in a PowerPoint slide?  Is the following text explaining the image? Following text:"
