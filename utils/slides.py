@@ -9,10 +9,12 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorDe
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from .textwork import _CONVERTER, _CONVERSION_CACHE
 
-def get_specific_element(pdf_path, element_type, element_num, image_path):
+def get_specific_element(pdf_path, element_type, element_label, target_caption, image_path):
     """
-    :param element_type: 'table'或'picture'
-    :param element_num: 元素编号(如3表示"表3")
+    :param element_type: 'table' or 'picture'
+    :param element_label: The label string (e.g., "Figure 10", "Table 2")
+    :param target_caption: The descriptive caption text from the planner
+    :param image_path: Path to save the extracted image
     """
     if Path(image_path).exists() and Path(image_path).stat().st_size > 0:
         return image_path
@@ -30,7 +32,6 @@ def get_specific_element(pdf_path, element_type, element_num, image_path):
         pipeline_options.generate_page_images = True
         pipeline_options.generate_picture_images = True
 
-        # Use shared converter if available, else initialize
         import utils.textwork as tw
         if tw._CONVERTER is None:
             tw._CONVERTER = DocumentConverter(
@@ -42,27 +43,48 @@ def get_specific_element(pdf_path, element_type, element_num, image_path):
         raw_result = tw._CONVERTER.convert(pdf_path)
         tw._CONVERSION_CACHE[pdf_key] = raw_result
 
+    best_match = None
+    max_score = -1
 
-    table_index = 1
-    image_index = 1
+    # Normalize label for matching (e.g., "Figure 10" -> "figure 10")
+    norm_label = element_label.lower().strip()
+    # Also handle "Fig. 10" vs "Figure 10"
+    alt_label = norm_label.replace("figure", "fig.") if "figure" in norm_label else norm_label
 
-    if "table"in element_type.lower() :
-        for table in raw_result.document.tables:
-            caption = table.caption_text(raw_result.document)
-            if len(caption) > 0:
-                if table_index == element_num:
-                    with Path(image_path).open("wb") as fp:
-                        table.get_image(raw_result.document).save(fp, "PNG")
-                table_index += 1
-    elif "image" in element_type.lower():
-        for image in raw_result.document.pictures:
-            caption = image.caption_text(raw_result.document)
-            if len(caption) > 0:
-                if image_index == element_num:
-                    with Path(image_path).open("wb") as fp:
-                        image.get_image(raw_result.document).save(fp, "PNG")
-                image_index += 1
-    return  image_path
+    elements = []
+    if "table" in element_type.lower():
+        elements = raw_result.document.tables
+    else:
+        elements = raw_result.document.pictures
+
+    for element in elements:
+        caption_text = element.caption_text(raw_result.document).lower()
+        if not caption_text:
+            continue
+        
+        score = 0
+        # 1. Label Match (Highest priority)
+        if norm_label in caption_text or alt_label in caption_text:
+            score += 100
+            # If it starts with the label, it's almost certainly the one
+            if caption_text.startswith(norm_label) or caption_text.startswith(alt_label):
+                score += 50
+        
+        # 2. Content overlap match
+        target_words = set(target_caption.lower().split())
+        caption_words = set(caption_text.split())
+        overlap = len(target_words.intersection(caption_words))
+        score += overlap
+
+        if score > max_score:
+            max_score = score
+            best_match = element
+    
+    if best_match and max_score > 0:
+        with Path(image_path).open("wb") as fp:
+            best_match.get_image(raw_result.document).save(fp, "PNG")
+    
+    return image_path
 
 
 def create_ppt_style_image( image_path, description, output_path,  width=800):

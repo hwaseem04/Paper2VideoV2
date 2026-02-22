@@ -1,7 +1,30 @@
 import logging
+import sys
+import re
 from pathlib import Path
-from typing import Optional,Union
+from typing import Optional, Union
 from time import time
+
+class Tee:
+    def __init__(self, filename, stream, mode="a"):
+        self.file = open(filename, mode, encoding='utf-8')
+        self.stream = stream
+        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+    def write(self, data):
+        # Strip ANSI codes for file
+        clean_data = self.ansi_escape.sub('', data)
+        self.file.write(clean_data)
+        self.stream.write(data)
+        self.file.flush()
+
+    def flush(self):
+        self.file.flush()
+        self.stream.flush()
+
+    def __del__(self):
+        if hasattr(self, 'file'):
+            self.file.close()
 
 
 class ColoredFormatter(logging.Formatter):

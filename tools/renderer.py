@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import fitz # PyMuPDF
 import textwrap
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, VideoFileClip
 import json
 import logging
 
@@ -96,6 +96,39 @@ class SlideRenderer:
                     duration = max(0.5, total_time - current_start)
             
             video_clip = ImageClip(str(frame_path)).set_duration(duration)
+            
+            # --- OVERLAY Custom Asset Videos if present in this build ---
+            # If the base elements have a 'video' block and an action says 'show video'
+            # we need to composite it over the static slide.
+            # video_overlays = []
+            # for action in build.get("actions", []):
+            #     atype = action.get("type")
+            #     target = action.get("target")
+            #     if (atype == "show" or atype == "fade_in") and target == "video" and "video" in elements:
+            #         vid_info = elements["video"]
+            #         vid_region = layout.get("regions", {}).get("video")
+            #         if vid_info and vid_region:
+            #             vid_path = self.pdf_path.parent / f"{self.pdf_path.stem} assets" / vid_info.get("path", "")
+            #             if vid_path.exists():
+            #                 # Load the video snippet
+            #                 vx, vy, vw, vh = self._to_px(vid_region)
+            #                 try:
+            #                     # We loop the snippet if it's shorter than the duration,
+            #                     # or cut it if it's longer to fit the build duration.
+            #                     sub_clip = VideoFileClip(str(vid_path)).resize((vw, vh)).set_position((vx, vy))
+            #                     if sub_clip.duration < duration:
+            #                         import moviepy.video.fx.all as vfx
+            #                         sub_clip = sub_clip.fx(vfx.loop, duration=duration)
+            #                     else:
+            #                         sub_clip = sub_clip.subclip(0, duration)
+            #                     
+            #                     video_overlays.append(sub_clip)
+            #                 except Exception as e:
+            #                     self.logger.error(f"Failed to overlay video {vid_path}: {e}")
+
+            # if video_overlays:
+            #     video_clip = CompositeVideoClip([video_clip] + video_overlays).set_duration(duration)
+
             if audio_clip:
                 video_clip = video_clip.set_audio(audio_clip)
                 
@@ -104,7 +137,7 @@ class SlideRenderer:
         # Concatenate
         final_clip = concatenate_videoclips(clips)
         output_path = scene_dir / f"scene{scene_idx}.mp4"
-        final_clip.write_videofile(str(output_path), fps=24)
+        final_clip.write_videofile(str(output_path), fps=24, logger=None)
         
         return str(output_path)
 
@@ -317,6 +350,14 @@ class SlideRenderer:
                     region = regions.get("figure")
                     if fig_info and region:
                         self._draw_figure(new_img, fig_info, region)
+                        
+                elif target == "video":
+                    pass # disabled # For video, just draw a placeholder bounding box or black rect under it
+                    # # The actual video compositing happens in `render_scene` using moviepy
+                    # region = regions.get("video")
+                    # if region:
+                    #     x, y, w, h = self._to_px(region)
+                    #     draw.rectangle([x, y, x+w, y+h], fill="black")
 
                 else:
                     # Generic handling for any other target
@@ -363,46 +404,47 @@ class SlideRenderer:
 
     def _draw_figure(self, img, fig_info, region):
         # Extract figure from PDF
-        # ref = "Figure 1"
         try:
             ref_text = fig_info.get('ref', '')
-            # Parse number from ref string e.g. "Figure 1" -> 1
-            import re
-            m = re.search(r'\d+', ref_text)
-            if m:
-                element_num = int(m.group(0))
-                # Determine type
-                etype = 'image' # Must match slides.py check for 'image' in element_type
-                if 'table' in ref_text.lower():
-                    etype = 'table'
+            caption_text = fig_info.get('caption', '')
+            
+            # Determine type
+            etype = 'image'
+            if 'table' in ref_text.lower():
+                etype = 'table'
+            
+            # Use a filename based on the reference label to avoid ordinal collisions
+            safe_ref = ref_text.replace(" ", "_").replace(".", "").lower()
+            temp_fig_path = self.output_dir / f"extracted_{safe_ref}.png"
+            
+            # Use utils.slides.get_specific_element
+            from utils.slides import get_specific_element
+            
+            # Note: get_specific_element now takes (pdf, type, label, caption, output_path)
+            extracted = get_specific_element(
+                str(self.pdf_path), 
+                etype, 
+                ref_text, 
+                caption_text, 
+                str(temp_fig_path)
+            )
+
+            x, y, w, h = self._to_px(region)
+            if Path(extracted).exists() and Path(extracted).stat().st_size > 0:
+                # Load and draw
+                fig_img = Image.open(extracted)
                 
-                # Temp path for extracted image
-                temp_fig_path = self.output_dir / f"extracted_{element_num}.png"
+                # Resize to fit region while maintaining aspect ratio
+                fig_img.thumbnail((w, h), Image.Resampling.LANCZOS)
                 
-                # Use utils.slides.get_specific_element
-                from utils.slides import get_specific_element
+                # Center in region
+                draw_x = x + (w - fig_img.width) // 2
+                draw_y = y + (h - fig_img.height) // 2
                 
-                # Note: get_specific_element takes (pdf, type, num, output_path)
-                # It returns the output_path
-                extracted = get_specific_element(str(self.pdf_path), etype, element_num, str(temp_fig_path))
-                
-                if Path(extracted).exists() and Path(extracted).stat().st_size > 0:
-                    # Load and draw
-                    fig_img = Image.open(extracted)
-                    x, y, w, h = self._to_px(region)
-                    
-                    # Resize to fit region while maintaining aspect ratio
-                    fig_img.thumbnail((w, h), Image.Resampling.LANCZOS)
-                    
-                    # Center in region
-                    draw_x = x + (w - fig_img.width) // 2
-                    draw_y = y + (h - fig_img.height) // 2
-                    
-                    img.paste(fig_img, (draw_x, draw_y))
-                    return
+                img.paste(fig_img, (draw_x, draw_y))
+                return
 
             # Fallback if extraction fails
-            x, y, w, h = self._to_px(region)
             draw = ImageDraw.Draw(img)
             draw.rectangle([x, y, x+w, y+h], outline="blue", width=5)
             draw.text((x+50, y+50), f"FIGURE: {ref_text} (Extraction Failed)", fill="blue", font=self.body_font)

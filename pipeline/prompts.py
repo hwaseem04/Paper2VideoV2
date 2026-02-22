@@ -7,6 +7,9 @@ The number of scenes should be based on the RECOMMENDATION in the style context 
 
 {style_context}
 
+Available Video Assets:
+{video_assets_context}
+
 Requirements: 
 1. Each scene must include strong relationship between last and next scene, but there must be no overlap of content.
 2. STRICTLY No overlapping content between scenes.
@@ -14,6 +17,7 @@ Requirements:
 4. Maintain high technical accuracy and professionalism.
 5. Deliver only core content; omit acknowledgements and references.
 6. Do NOT create a title/introduction scene. Scene 0 (title page with paper title, authors, logos) is auto-generated separately. Start your scenes from the paper's technical content.
+7. If a video asset from `Available Video Assets` is highly relevant to a scene's content, assign its filename to `asset_video` in the JSON. Otherwise, set it to `null`. Do not invent video filenames.
 
 You MUST output the scenes in the following STRICT JSON format (list of objects):
 ```json
@@ -24,6 +28,7 @@ You MUST output the scenes in the following STRICT JSON format (list of objects)
     "summary": "content covered in this scene",
     "paper_section": "Introduction/Method/etc",
     "narrative_role": "one of [introduction/experiments/method/results]",
+    "asset_video": "clip1.mp4",
     "duration_stat": {{
       "min": 5.0,
       "max": 15.0,
@@ -110,10 +115,11 @@ Your job is to decide the **visual layout** for this slide. Do NOT decide builds
 ## CHOOSE THE BEST LAYOUT
 
 Pick the layout template that best suits the content. Common templates include (but you are NOT limited to these):
-- `two_col_fig_left` — Figure on left, bullets on right. Best for: method diagrams, architecture figures.
-- `two_col_fig_right` — Bullets on left, figure on right. Best for: motivation slides with illustrative figures.
-- `full_fig_with_callouts` — Large figure with small bullet callouts below. Best for: results, data visualizations.
+- `two_col_fig_left` — Figure on left, bullets on right. Best for: method diagrams, architecture figures, or tall/vertical figures.
+- `two_col_fig_right` — Bullets on left, figure on right. Best for: motivation slides with illustrative or tall/vertical figures.
+- `full_fig_with_callouts` — Large figure with small bullet callouts below. Best for: results, data visualizations, or wide/horizontal figures.
 - `one_col_bullets` — Full-width bullets, no figure. Best for: text-heavy overview or summary slides.
+- `video_with_caption` — Large video region with small bullet callouts below. Best for: when an `asset_video` is provided.
 
 If none of these fit, invent a descriptive template name and define its regions.
 
@@ -125,18 +131,24 @@ If none of these fit, invent a descriptive template name and define its regions.
   "layout_regions": {{
     "title": {{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.1}},
     "figure": {{"x": 0.05, "y": 0.2, "w": 0.45, "h": 0.7}},
+    "video": {{"x": 0.05, "y": 0.2, "w": 0.45, "h": 0.7}},
     "bullets": {{"x": 0.55, "y": 0.25, "w": 0.4, "h": 0.6}}
   }},
   "has_figure": true,
+  "has_video": false,
   "style_rationale": "Two-column layout with figure on left is ideal for showing the architecture diagram alongside explanatory bullets."
 }}
 
 ## STRICT RULES:
-1. **Region keys**: Only use `title`, `bullets`, `figure` as region keys. Do NOT invent keys like `callout_1`, `table`, etc.
+1. **Region keys**: Only use `title`, `bullets`, `figure`, `video` as region keys. Do NOT invent keys like `callout_1`, `table`, etc.
 2. **Coordinates**: All x/y/w/h values must be normalized (0.0 to 1.0). Regions must not overlap.
 3. **has_figure**: Set to `true` only if the content summary has relevant figures. If no figure is available, omit `figure` from regions.
-4. **No builds**: Do NOT include `build_skeleton`, `expected_build_steps`, or any animation information.
-5. Output ONLY valid JSON, no markdown fences, no explanation.
+4. **has_video**: Set to `true` only if `scene_context` specifically assigns an `asset_video`. If true, include the `video` region. Do not include both `figure` and `video` unless space permits.
+5. **No builds**: Do NOT include `build_skeleton`, `expected_build_steps`, or any animation information.
+6. Output ONLY valid JSON, no markdown fences, no explanation.
+
+IMPORTANT FIGURE ASPECT RATIO RULE:
+If the extracted figure is nearly square, its placement is flexible. However, if the figure has a much larger dimension horizontally (like a wide rectangle), choose a layout with a wide figure region (e.g., `full_fig_with_callouts` or placing it spanning top/bottom) so it is not shrunk awkwardly. If it is very tall/vertical, choose a side-by-side template (e.g., `two_col_fig_left`) where it has vertical space. Ensure your chosen template and `layout_regions` coordinates are decided accordingly to preserve the figure's aspect ratio without shrinking it.
 """
 
 ### ─────────────────────────────────────────────────
@@ -175,15 +187,23 @@ Your job is to **draft the actual content** (title, bullets, audio, figure choic
     "ref": "Figure X",
     "caption": "Brief caption describing the figure"
   }},
+  "video": {{
+    "type": "asset_video",
+    "path": "clip1.mp4",
+    "caption": "Brief caption describing the video contents"
+  }},
   "source": ["Figure 1", "Section 3.1"],
   "prompt": "Visual description of the scene for generation"
 }}
 
 ## STRICT RULES:
 1. **Number of bullets**: Write 2-4 concise, impactful bullets that cover the key points from the extracted content.
-2. **Figure reference**: ONLY use figures listed in the content summary's `key_figures`. Do NOT invent figure references. If the style plan has `has_figure: false`, omit `figure` entirely.
+2. **Figure/Video assignment**: 
+   - Assign `figure` ONLY if the content summary's `key_figures` has relevant images. 
+   - Assign `video` ONLY if the `scene_context` assigns an `asset_video`.
+   - If the style plan omits `has_figure` or `has_video`, omit the respective block completely.
 3. **Bullet text**: Each bullet should be concise (under 15 words preferred), impactful, and directly derived from `extracted_content`. Not a copy — a focused summary.
-4. **audio_content**: Natural narration covering all bullet points. 
+4. **audio_content**: Natural narration covering all bullet points AND the video clip action if a video is present. 
 5. **duration_sec**: First, draft the `audio_content`. Then, CALCULATE the duration: `duration_sec = word_count_of_audio / 2.5`. Do NOT guess. If the stats say 8s but you wrote 40 words, `duration_sec` MUST be 16.0.
 6. Output ONLY valid JSON, no markdown fences, no explanation.
 """
@@ -256,15 +276,15 @@ Your job is to:
 }}
 
 ## STRICT RULES:
-1. **Build count**: `expected_build_steps` = 1 + number_of_bullets. Build 0 shows title (and figure if present), then one build per bullet.
+1. **Build count**: `expected_build_steps` = 1 + number_of_bullets. Build 0 shows title (and figure/video if present), then one build per bullet.
 2. **One bullet per build**: After build 0, each build reveals exactly ONE bullet. `bullets[0]` in build 1, `bullets[1]` in build 2, etc.
-3. **Build 0**: Always shows `title` (and `figure` if present). Never shows bullets in build 0.
+3. **Build 0**: Always shows `title` (and `figure`/`video` if present). Never shows bullets in build 0.
 4. **Audio segments**: Split the `audio_content` from the draft into segments. Each build's `audio_segment` must be non-empty and correspond to what that build reveals.
 5. **Bullet ordering**: Assign bullets to builds in the order that creates the best storytelling flow for the audience.
 6. **time_offset_sec**: Space evenly across the total time. For N builds over T seconds: offsets at 0, T/N, 2T/N, etc.
 7. **visual_emphasis**: Always set to empty list `[]`.
-8. **Action targets**: Only use targets that exist in `elements`: `title`, `figure`, `bullets[0]`, `bullets[1]`, etc.
-9. **elements**: Copy the drafted title, figure, and bullets exactly — do not modify the text content.
+8. **Action targets**: Only use targets that exist in `elements`: `title`, `figure`, `video`, `bullets[0]`, `bullets[1]`, etc.
+9. **elements**: Copy the drafted title, figure, video, and bullets exactly — do not modify the text content.
 10. Output ONLY valid JSON, no markdown fences, no explanation.
 """
 
@@ -299,6 +319,49 @@ Look at the FIRST PAGE of this paper and extract the following metadata:
 5. If no email is visible, leave email_domain as an empty string.
 6. For venue, look for conference/journal name (e.g. "CVPR 2025", "NeurIPS 2024", "ICLR 2025"). If not found, use empty string.
 7. Output ONLY valid JSON, no markdown fences, no explanation.
+"""
+
+### ─────────────────────────────────────────────────
+### Asset Analyser Prompts
+### ─────────────────────────────────────────────────
+
+asset_analyser_image_prompt = """You are an expert at identifying visual branding elements.
+
+I have provided {num_images} images. One of these images is the primary conference or journal logo for a paper (e.g., CVPR, ICCV, Nature). The others are affiliation logos (e.g., University logos, Company logos like Google or Meta).
+
+Identify which image corresponds to which category.
+
+## OUTPUT FORMAT — Return ONLY valid JSON:
+{{
+  "conference_logo": "image_0",
+  "affiliation_logos": ["image_1", "image_2"]
+}}
+
+## STRICT RULES:
+1. ONLY exactly one image can be the `conference_logo`. The rest go into `affiliation_logos` list.
+2. If an image is completely irrelevant or noise, omit it from the JSON.
+3. VISUAL CONTENT OVER FILENAMES: Even if a file is named "figure1.png", if it VISUALLY looks like a logo (a logo for a university, a logo for a lab, or a logo for a conference/journal like CVPR), you SHOULD categorize it as a logo.
+4. FIGURES ARE NOT LOGOS. If an image looks like a technical diagram, a results plot, or a screenshot from the paper, it is NOT a logo. Skip it.
+5. Use the literal exact string "image_0" to refer to the first image, "image_1" for the second, etc.
+6. Output ONLY valid JSON, no markdown fences, no explanation.
+"""
+
+asset_analyser_video_prompt = """You are an expert at analyzing research paper supplementary videos.
+
+Please watch this video clip named '{filename}'.
+
+What is the visual content of this clip, and what paper section does it most likely belong to?
+
+## OUTPUT FORMAT — Return ONLY valid JSON:
+{{
+  "description": "A 1-2 sentence description of what the video visually demonstrates (e.g., a software demo tracking a red car, a 3D point cloud visualization, an architecture animation).",
+  "relevance": "one of [Introduction, Method, Experiments, Results]"
+}}
+
+## STRICT RULES:
+1. Keep the description purely factual based on visuals.
+2. Select the most appropriate section from the `relevance` choices. If it's a quantitative tracking demo, choose Results. If it's explaining how a component works, choose Method.
+3. Output ONLY valid JSON, no markdown fences, no explanation.
 """
 
 title_style_prompt = """You are an expert presentation designer for academic video summaries.

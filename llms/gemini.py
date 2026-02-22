@@ -142,6 +142,56 @@ class GEMINI(BaseLLM):
                 f"Retrying in {delay:.3f} seconds...", level='warning')
             sleep(delay)
 
+    def query_video(self,
+                    prompt: str,
+                    video_path: Path,
+                    format_check: Optional[Callable[[object], None]] = None) -> tuple[str, str]:
+        """Uploads a video to Gemini and queries the model."""
+        import time
+        self._log(f"Uploading video {video_path.name} to Gemini...")
+        
+        try:
+            video_file = genai.upload_file(path=str(video_path))
+            
+            # Wait for processing
+            while video_file.state.name == 'PROCESSING':
+                self._log("Waiting for video to be processed...")
+                time.sleep(5)
+                video_file = genai.get_file(video_file.name)
+            
+            if video_file.state.name == 'FAILED':
+                raise RuntimeError(f"Video processing failed for {video_path.name}")
+                
+            self._log(f"Video {video_path.name} processed and ready.")
+            
+            message = [video_file, prompt]
+            
+            while True:
+                response = self._send_request(message)
+                
+                usage = response.usage_metadata
+                self.prompt_tokens += usage.prompt_token_count
+                self.completion_tokens += usage.candidates_token_count
+                
+                rsp_text: str = response.text
+                if format_check is not None:
+                    valid, rsp_text = self._check_syntax(rsp_text, format_check)
+                    if not valid:
+                        continue
+                
+                # Cleanup file
+                try:
+                    genai.delete_file(video_file.name)
+                    self._log(f"Cleaned up video from Gemini API: {video_path.name}")
+                except Exception as e:
+                    self._log(f"Failed to cleanup video: {e}", level="warning")
+                    
+                return prompt, rsp_text
+                
+        except Exception as e:
+            self._log(f"Failed to query Gemini with video: {e}", level="warning")
+            raise e
+
     def _check_response(self, response: requests.Response) -> tuple[bool, Optional[float]]:
         """Checks if the response is valid. If error occurs, gets the recommended delay if any.
 
