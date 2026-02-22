@@ -23,7 +23,13 @@ from utils.misc import download_file, name_to_pdb_ids, download_pdb
 from utils.mol import generate_mol_animation
 from tools.retriever import PaperRetriever
 from tools.renderer import SlideRenderer
-from tools.logo_manager import resolve_logos, format_authors_display, format_affiliations_display, format_authors_with_superscripts
+from tools.logo_manager import format_authors_display, format_affiliations_display, format_authors_with_superscripts
+from tools.asset_analyser import AssetAnalyser
+from .planners.high_level_planner import HighLevelPlanner
+from .planners.content_grounder import ContentGrounder
+from .planners.style_planner import StylePlanner
+from .planners.low_level_planner import LowLevelPlanner
+from .planners.style_refiner import StyleRefiner
 import random
 import json
 
@@ -313,7 +319,22 @@ class Preacher:
             self.manim_example = examples["MANIM_examples"]
         random.seed(0)
 
-    def retrieve_global_style(self) -> str:
+        # Asset Analyser Initialization
+        self.asset_analyser = AssetAnalyser(
+            work_dir=self.work_dir,
+            pdf_path=self.pdf_path,
+            llm_instance=self.planner,  # Pass the main planner for Gemini tasks
+            logger=self.workflow_logger
+        )
+
+        # Instantiate Disentangled Planners
+        self.high_level_planner = HighLevelPlanner(self.planner, self.evaluator, self.workflow_logger)
+        self.content_grounder = ContentGrounder(self.planner, self.workflow_logger)
+        self.style_planner = StylePlanner(self.planner, self.workflow_logger)
+        self.low_level_planner = LowLevelPlanner(self.planner, self.evaluator, self.workflow_logger)
+        self.style_refiner = StyleRefiner(self.planner, self.workflow_logger)
+
+        self.workflow_logger.info("Preacher components (and planners) successfully created.")
         """
         Retrieve context for high-level planning.
         """
@@ -502,6 +523,11 @@ class Preacher:
         self.degradations = set(self.degra_subtask_dict.keys())
         self.subtasks = set(self.degra_subtask_dict.values())
         self.levels: list[Level] = ["very low", "low", "medium", "high", "very high"]
+
+        # Examples (initialized to None, loaded in _create_components if with_example)
+        self.high_example = None
+        self.low_example = None
+        self.manim_example = None
         
     def _ensure_audio(self, content: str, return_url=False) -> Path:
         target = self.curr_scene_dir / "audio.wav"
@@ -526,6 +552,21 @@ class Preacher:
             with open(self.high_plan_path, 'r') as file:
                 self.high_plan = file.read()
         else:
+            # 1a. Pre-process assets (videos) to feed into high_planning
+            # self.workflow_logger.info("=" * 50)
+            # self.workflow_logger.info("Step 1a: Pre-processing Assets...")
+            # self.workflow_logger.info("=" * 50)
+
+            # video_summaries = self.asset_analyser.analyze_videos()
+            self.video_summaries_context = "" # Temporarily disabled
+            # if video_summaries:
+            #     for v_name, v_data in video_summaries.items():
+            #         self.video_summaries_context += f"Filename: {v_name}\nDescription: {v_data['description']}\nRelevance: {v_data['relevance']}\n\n"
+            # else:
+            #     self.video_summaries_context = "No video assets provided."
+
+            # self.workflow_logger.info(f"Video assets context identified:\n{self.video_summaries_context}")
+
             self.high_plan = self.high_planning()
             
         # 2. Parse High Plan
@@ -637,21 +678,19 @@ class Preacher:
         venue = metadata.get("venue", "")
         paper_title = metadata.get("paper_title", "Untitled Paper")
         
-        # --- Resolve logos ---
-        logos = resolve_logos(
-            pdf_path=self.input_path,
-            affiliations=affiliations,
-            venue=venue,
-        )
+        # --- Resolve logos via AssetAnalyser ---
+        logos = self.asset_analyser.analyze_images()
         
         # Build available_logos description for the style prompt
         available_logos_desc = []
         if logos.get("conference"):
-            available_logos_desc.append(f"conference_logo: {logos['conference'].name}")
+            conf_path = Path(logos['conference'])
+            available_logos_desc.append(f"conference_logo: {conf_path.name}")
         for i, aff_logo in enumerate(logos.get("affiliations", [])):
             if aff_logo:
+                aff_path = Path(aff_logo)
                 aff_name = affiliations[i].get("name", f"Affiliation {i+1}") if i < len(affiliations) else f"Affiliation {i+1}"
-                available_logos_desc.append(f"affiliation_{i+1}_logo: {aff_logo.name} ({aff_name})")
+                available_logos_desc.append(f"affiliation_{i+1}_logo: {aff_path.name} ({aff_name})")
         
         if not available_logos_desc:
             available_logos_str = "No logos available."
@@ -768,62 +807,21 @@ class Preacher:
 
     def high_planning(self) -> str: # Changed return type to str
         """Sets the initial plan."""
-
-        style_context = ""#self.retrieve_global_style()
-        if self.with_reflection:
-            high_planning_success=False
-            iter=0
-            eval_results=None
-            high_plan=None
-            while high_planning_success == False and (iter < self.max_high_plan_iteration):
-                high_plan = self.high_plan_by_llm(style_context, eval_results, high_plan)
-                high_planning_success, eval_results = self.high_evaluate_by_llm(high_plan)
-                iter += 1
-        else:
-            high_plan = self.high_plan_by_llm(style_context)
-        self.workflow_logger.info(f"High Level Plan: {high_plan}")
-        # with open(self.high_plan_path, 'w') as file:
-        #     file.write(high_plan)
-
-        with open(self.high_plan_path, 'w', encoding='utf-8') as f:
-            json.dump(high_plan, f, ensure_ascii=False, indent=2)
-        return high_plan
-    
-    def high_plan_by_llm(self, style_context, eval_results=None, high_plan=None) -> str:
-        if eval_results:
-            prompt = high_plan + ' \n '+ prompts.high_level_replanning_prompt + eval_results + ' \n ' + style_context
-        else:
-            # Inject style context into the placeholder
-            # Note: prompts.high_level_planning_prompt has {style_context} placeholder now
-            try:
-                base_prompt = prompts.high_level_planning_prompt.format(style_context=style_context)
-            except Exception as e:
-                 # Fallback if format fails (e.g. if prompt doesn't have placeholder or has other braces)
-                 self.workflow_logger.warning(f"Formatting failed: {e}")
-                 base_prompt = prompts.high_level_planning_prompt + "\n\n" + style_context
-
-            prompt = base_prompt
-            if self.with_example :
-                prompt += ' \n '+ merge_dict_keys_values(self.high_example) 
-        high_plan = eval(
-            self.planner(
-                prompt=prompt,
-                pdf_path=Path(self.pdf_path),
-            )
+        return self.high_level_planner.high_planning(
+            pdf_path=self.pdf_path,
+            high_plan_path=self.high_plan_path,
+            with_reflection=self.with_reflection,
+            with_example=self.with_example,
+            high_example=self.high_example,
+            max_high_plan_iteration=self.max_high_plan_iteration,
+            video_summaries_context=self.video_summaries_context
         )
-        self.workflow_logger.info(f"High_plan: {high_plan}")
-        return  high_plan
+    
+    def high_plan_by_llm(self, style_context, video_summaries_context, eval_results=None, high_plan=None) -> str:
+        return self.high_level_planner.high_plan_by_llm(self.pdf_path, style_context, video_summaries_context, self.with_example, self.high_example, eval_results, high_plan)
     
     def high_evaluate_by_llm(self, high_plan) -> str:
-        prompt = prompts.high_level_evaluate_prompt + ' \n '+ high_plan
-        eval_results = eval(
-            self.evaluator(
-                prompt = prompt,
-                pdf_path=Path(self.pdf_path),
-                ))
-        success = classify_response(eval_results)
-        self.workflow_logger.info(f"Eval_Results: {eval_results}")
-        return success, eval_results
+        return self.high_level_planner.high_evaluate_by_llm(self.pdf_path, high_plan)
     
     def low_planning(self, part_plan):
         """Orchestrate the 4-stage low-level planning pipeline."""
@@ -864,7 +862,7 @@ class Preacher:
                             past_contents.append(json.load(f))
                     except Exception:
                         pass
-            content_summary = self.content_extract_by_llm(part_plan, past_contents)
+            content_summary = self.content_grounder.content_extract_by_llm(self.pdf_path, self.scene_idx, part_plan, past_contents)
             with open(content_file, "w") as f:
                 json.dump(content_summary, f, indent=4)
         
@@ -877,7 +875,7 @@ class Preacher:
         else:
             self.workflow_logger.info(f"  Stage 2: Planning style/layout...")
             style_advice = self.retrieve_scene_style(part_plan)
-            style_plan = self.style_plan_by_llm(part_plan, content_summary, style_advice)
+            style_plan = self.style_planner.style_plan_by_llm(self.pdf_path, self.scene_idx, part_plan, content_summary, style_advice)
             with open(style_file, "w") as f:
                 json.dump(style_plan, f, indent=4)
         
@@ -902,7 +900,7 @@ class Preacher:
                     except Exception:
                         pass
                         
-            content_draft = self.low_plan_by_llm(part_plan, content_summary, style_plan, duration_stat, past_contents)
+            content_draft = self.low_level_planner.low_plan_by_llm(self.pdf_path, self.scene_idx, part_plan, content_summary, style_plan, duration_stat, past_contents)
             with open(low_file, "w") as f:
                 json.dump(content_draft, f, indent=4)
         
@@ -914,7 +912,7 @@ class Preacher:
                 final_refined = json.load(f)
         else:
             self.workflow_logger.info(f"  Stage 4: Assigning content to builds...")
-            final_refined = self.style_refine_by_llm(content_draft, style_plan)
+            final_refined = self.style_refiner.style_refine_by_llm(self.pdf_path, self.scene_idx, content_draft, style_plan)
             # Ensure duration_sec is carried over
             final_refined["time_allocation_sec"] = content_draft.get("duration_sec", 8.0)
             with open(refine_file, "w") as f:
@@ -943,125 +941,8 @@ class Preacher:
             json.dump(self.final_plan[self.scene_idx], file, indent=4)
         self.workflow_logger.info(f"  Scene {self.scene_idx}: All 4 stages complete. Saved to {plan_file}")
     
-    # ── Individual stage methods ──
-    
-    def content_extract_by_llm(self, part_plan, past_contents=None) -> dict:
-        """Stage 1: Extract relevant content from the paper for this scene."""
-        memory_context = ""
-        if past_contents:
-            memory_context = "## Previous Scenes Memory\n"
-            memory_context += "The following content was extracted for the immediately preceding scenes. **This is provided as a memory of what the audience has JUST seen.**\n"
-            memory_context += "You MUST NOT repeat the claims, figures, tables, or equations from these previous scenes in your current extraction, to ensure the presentation maintains forward momentum without redundant slides.\n"
-            memory_context += "If you must reference the exactly same figure/table, the 'relevance' MUST be clearly unique to avoid narrative duplication.\n\n"
-            for past in past_contents:
-                subset = {
-                    "extracted_content": past.get("extracted_content", ""),
-                    "key_figures": past.get("key_figures", []),
-                    "key_tables": past.get("key_tables", []),
-                    "key_equations": past.get("key_equations", [])
-                }
-                memory_context += json.dumps(subset, indent=2) + "\n"
-
-        prompt = prompts.content_extraction_prompt.format(
-            scene_json=json.dumps(part_plan, indent=2),
-            memory_context=memory_context
-        )
-        raw = eval(self.planner(
-            prompt=prompt,
-            pdf_path=Path(self.pdf_path),
-        ))
-        self.workflow_logger.info(f"  Content extraction scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
-        
-        parsed = _load_json_dict(raw)
-        if not parsed or not isinstance(parsed, dict):
-            raise ValueError(f"Content extraction failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
-        return parsed
-    
-    def style_plan_by_llm(self, part_plan, content_summary, style_advice) -> dict:
-        """Stage 2: Decide layout and build skeleton using content + reference styles."""
-        prompt = prompts.style_planning_prompt.format(
-            content_summary=json.dumps(content_summary, indent=2),
-            scene_context=json.dumps(part_plan, indent=2),
-            style_advice=style_advice,
-        )
-        raw = eval(self.planner(
-            prompt=prompt,
-            pdf_path=Path(self.pdf_path),
-        ))
-        self.workflow_logger.info(f"  Style plan scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
-        
-        parsed = _load_json_dict(raw)
-        if not parsed or not isinstance(parsed, dict):
-            raise ValueError(f"Style planning failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
-        return parsed
-    
-    def low_plan_by_llm(self, part_plan, content_summary, style_plan, duration_stat, past_contents=None) -> dict:
-        """Stage 3: Draft content (bullets, audio, figures) within the decided layout."""
-        
-        memory_context = ""
-        if past_contents:
-            memory_context = "## Previous Content\n"
-            memory_context += "The following content was drafted for the immediately preceding scenes.\n"
-            memory_context += "You MUST NOT repeat the exact text content or claims from these previous scenes in your current draft.\n\n"
-            for past in past_contents:
-                subset = {
-                    "bullets": past.get("bullets", []),
-                    "audio_content": past.get("audio_content", "")
-                }
-                memory_context += json.dumps(subset, indent=2) + "\n"
-
-        prompt = prompts.low_level_planning_prompt.format(
-            content_summary=json.dumps(content_summary, indent=2),
-            style_plan=json.dumps(style_plan, indent=2),
-            scene_context=json.dumps(part_plan, indent=2),
-            duration_stat=json.dumps(duration_stat, indent=2),
-            memory_context=memory_context,
-        )
-        raw = eval(self.planner(
-            prompt=prompt,
-            pdf_path=Path(self.pdf_path),
-        ))
-        self.workflow_logger.info(f"  Content draft scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
-        
-        parsed = _load_json_dict(raw)
-        if not parsed or not isinstance(parsed, dict):
-            raise ValueError(f"Content drafting failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
-        return parsed
-    
-    def style_refine_by_llm(self, content_draft, style_plan) -> dict:
-        """Stage 4: Decide builds from scratch, assign drafted content to build steps."""
-        total_time_sec = content_draft.get("duration_sec", 8.0)
-        prompt = prompts.style_refinement_prompt.format(
-            content_draft=json.dumps(content_draft, indent=2),
-            layout_info=json.dumps({
-                "layout_template": style_plan.get("layout_template", ""),
-                "layout_regions": style_plan.get("layout_regions", {}),
-                "has_figure": style_plan.get("has_figure", False),
-                "total_time_sec": total_time_sec,
-            }, indent=2),
-        )
-        raw = eval(self.planner(
-            prompt=prompt,
-            pdf_path=Path(self.pdf_path),
-        ))
-        self.workflow_logger.info(f"  Style refinement scene {self.scene_idx}: {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
-        
-        parsed = _load_json_dict(raw)
-        if not parsed or not isinstance(parsed, dict):
-            raise ValueError(f"Style refinement failed for scene {self.scene_idx}. Raw: {str(raw)[:200]}")
-        return parsed
-    
     def low_evaluate_by_llm(self, low_plan_str) -> tuple:
-        prompt = prompts.low_level_evaluate_prompt + ' \n ' + low_plan_str
-        eval_results = eval(
-            self.evaluator(
-                prompt=prompt,
-                pdf_path=Path(self.pdf_path),
-            )
-        )
-        success = classify_response(eval_results)
-        self.workflow_logger.info(f"Low eval scene {self.scene_idx}: {eval_results}")
-        return success, eval_results
+        return self.low_level_planner.low_evaluate_by_llm(self.pdf_path, self.scene_idx, low_plan_str)
     
     def generate_(self, scene_idx):
         self.curr_scene_dir = self.work_dir / "scene_{}".format(scene_idx)
