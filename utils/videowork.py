@@ -195,39 +195,44 @@ def image_to_video(image_path, audio_path, video_duration, output_path):
     image_clip.close()
 
 def concatenate_videos(video_list, output_path):
+    """Concatenate scene videos into a single output video via ffmpeg concat demuxer.
+
+    Uses ffmpeg directly (not MoviePy) to avoid MoviePy audio-loss bugs caused by
+    concatenate_videoclips(method="compose") producing a CompositeVideoClip whose
+    audio is dropped by ffmpeg_write_video.
+
+    ffmpeg concat demuxer:
+      - Copies the video stream without re-encoding (-c:v copy, fast & lossless).
+      - Explicitly encodes audio as AAC (-c:a aac), preserving it in the .mp4.
     """
-    将视频列表中的视频按顺序拼接成一个长视频。
-    :param video_list: 视频文件路径列表
-    :param output_path: 输出视频路径
-    """
-    # 创建一个空列表来存储视频剪辑
-    clips = []
     output_path = str(output_path)
-    # 遍历视频列表，加载每个视频文件
-    for video_path in video_list:
-        video_path = str(video_path)
-        clip = VideoFileClip(video_path)
-        clips.append(clip)
+    concat_file  = output_path + "_concat_list.txt"
 
-    # 按顺序拼接视频剪辑
-    final_clip = concatenate_videoclips(clips, method="compose")
+    try:
+        # Build the ffmpeg concat input file (one "file 'path'" line per scene)
+        with open(concat_file, "w") as f:
+            for video_path in video_list:
+                # Escape single-quotes in paths for ffmpeg concat syntax
+                safe_path = str(video_path).replace("'", "'\\''")
+                f.write(f"file '{safe_path}'\n")
 
-    # save concatenated video
-    # Manual write to bypass decorator bugs
-    fps = 24.0
-    audiofile = None
-    if final_clip.audio:
-        audiofile = str(output_path) + "_temp_audio.m4a"
-        final_clip.audio.write_audiofile(audiofile, fps=44100, codec="aac", verbose=False, logger=None)
-        
-    ffmpeg_write_video(final_clip, str(output_path), fps, codec="libx264", audiofile=audiofile)
-    
-    if audiofile and os.path.exists(audiofile):
-        os.remove(audiofile)
-
-    # 关闭所有视频剪辑
-    for clip in clips:
-        clip.close()
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_file,
+                "-c:v", "copy",          # copy video stream — no re-encode needed
+                "-c:a", "aac",           # encode audio as AAC (compatible with .mp4)
+                "-movflags", "+faststart",
+                output_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        if os.path.exists(concat_file):
+            os.remove(concat_file)
 if __name__ == "__main__":
     plan = {"scenario":"1",
             "prompt":"1",

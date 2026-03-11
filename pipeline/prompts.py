@@ -90,16 +90,89 @@ Read the paper carefully and extract ALL relevant content from the section(s) re
 4. **extracted_content** must be detailed enough to create 2-4 meaningful bullet points from it.
 5. **Memory Context**: The `Previous Scenes Memory` (if provided) shows what was ALREADY covered. You MUST NOT repeat its text content, claims, figures, tables, or equations. CRITICAL: Even if you MUST reference the same figure/table, the text content (`extracted_content`) and `relevance` MUST still be completely DIFFERENT.
 6. Output ONLY valid JSON, no markdown fences, no explanation.
+7. **ASCII quotes ONLY**: Every string in your JSON MUST use standard ASCII double-quote characters ("). NEVER use Unicode typographic or curly quotes (\u201c \u201d \u2018 \u2019). When copying text from the paper that contains curly quotes, replace them with straight ASCII double-quotes.
 """
 
 ### ─────────────────────────────────────────────────
 ### Stage 2: Style Planning (Layout Only)
 ### ─────────────────────────────────────────────────
 
-# scene_context might not be needed i think
-# syle advice should be the section wise retrieval
-style_planning_prompt = """
-You are an expert presentation designer for academic video summaries.
+import json as _json
+
+# Element type reference table injected into every style planning prompt
+_ELEMENT_TYPES_TABLE = """
+## LayoutSpec v1 — Element Types
+
+| Type | Description               | content_ref (MUST use exactly) |
+|------|---------------------------|--------------------------------|
+| T    | Primary title             | elements.title                 |
+| ST   | Subtitle                  | elements.subtitle              |
+| B    | Bullet list               | elements.bullets               |
+| P    | Body paragraph            | elements.body                  |
+| EQ   | LaTeX equation            | elements.equations             |
+| L    | Sub-figure label          | elements.label_1 etc.          |
+| META | Authors / logos row       | elements.meta                  |
+| F    | Paper figure / image      | elements.figure (1st), elements.figure_2 (2nd), elements.figure_3 (3rd) |
+| D    | Architecture / diagram    | elements.figure (1st), elements.figure_2 (2nd), elements.figure_3 (3rd) |
+| CH   | Chart (bar/line/etc.)     | elements.figure (1st), elements.figure_2 (2nd), elements.figure_3 (3rd) |
+| TAB  | Table image               | elements.figure (1st), elements.figure_2 (2nd), elements.figure_3 (3rd) |
+| QR   | QR code                   | elements.qr_url                |
+
+**CRITICAL**:
+- The FIRST F / D / CH / TAB element uses `"content_ref": "elements.figure"`.
+- The SECOND uses `"content_ref": "elements.figure_2"`, the THIRD uses `"content_ref": "elements.figure_3"`, and so on.
+- Only use multiple figure slots if the content actually has multiple distinct key_figures that each merit their own region.
+- Never invent custom keys like `"elements.table_1"` or `"elements.chart_2"`.
+- EQ MUST use `"elements.equations"` (plural).
+
+## Layout Signature Encoding
+- `|` separates rows (top to bottom)
+- `-` separates elements within a row (left to right)
+- Examples: `T|F-B`, `F`, `T|TAB-CH`, `T|L-L-L|F-F-F`, `META|T|ST|META|QR`
+"""
+
+
+def style_planning_prompt(content_summary: str, scene_context: str, style_context: dict) -> str:
+    """Build the style planning prompt, injecting LayoutSpec v1 examples.
+
+    Args:
+        content_summary: JSON string of the extracted content.
+        scene_context: JSON string of the high-level scene plan.
+        style_context: dict from retrieve_scene_style() with keys:
+            layout_specs        — list of LayoutSpec v1 dicts (preferred)
+            layout_descriptions — list of fallback verbose strings
+            durations           — {min, max, avg} duration stats dict
+    """
+    # ── Build reference examples section ────────────────────────────────────
+    layout_specs = style_context.get("layout_specs", [])
+    layout_descriptions = style_context.get("layout_descriptions", [])
+    durations = style_context.get("durations", {})
+
+    reference_section = ""
+    if layout_specs:
+        reference_section += "## Reference Layout Examples (LayoutSpec v1 from similar papers)\n\n"
+        for i, spec in enumerate(layout_specs):
+            reference_section += f"### Example {i+1}: {spec.get('layout_type', '')} (signature: {spec.get('layout_signature', '')})\n"
+            reference_section += "```json\n" + _json.dumps(spec, indent=2) + "\n```\n\n"
+
+    if layout_descriptions:
+        reference_section += "## Additional Reference Descriptions (verbose, for inspiration only)\n\n"
+        for i, desc in enumerate(layout_descriptions):
+            reference_section += f"- Reference {i+1}: {desc}\n"
+        reference_section += "\n"
+
+    if durations:
+        reference_section += (
+            f"## Duration Statistics for This Section\n"
+            f"min={durations.get('min', '?')}s, max={durations.get('max', '?')}s, "
+            f"avg={durations.get('avg', '?')}s\n\n"
+        )
+
+    if not reference_section:
+        reference_section = "(No reference layouts available — design from scratch.)\n"
+
+    # ── Build full prompt ────────────────────────────────────────────────────
+    return f"""You are an expert presentation designer for academic video summaries.
 
 Given the following content summary extracted from a paper:
 {content_summary}
@@ -107,48 +180,107 @@ Given the following content summary extracted from a paper:
 Scene context from high-level plan:
 {scene_context}
 
-Reference style advice:
-{style_advice}
+{reference_section}
+{_ELEMENT_TYPES_TABLE}
 
-Your job is to decide the **visual layout** for this slide. Do NOT decide builds or animations — those will be planned later.
+Your job is to decide the **visual layout** for this slide as a LayoutSpec v1 JSON.
+Do NOT decide builds or animations — those will be planned later.
 
-## CHOOSE THE BEST LAYOUT
+## GRID COORDINATE SYSTEM
 
-Pick the layout template that best suits the content. Common templates include (but you are NOT limited to these):
-- `two_col_fig_left` — Figure on left, bullets on right. Best for: method diagrams, architecture figures, or tall/vertical figures.
-- `two_col_fig_right` — Bullets on left, figure on right. Best for: motivation slides with illustrative or tall/vertical figures.
-- `full_fig_with_callouts` — Large figure with small bullet callouts below. Best for: results, data visualizations, or wide/horizontal figures.
-- `one_col_bullets` — Full-width bullets, no figure. Best for: text-heavy overview or summary slides.
-- `video_with_caption` — Large video region with small bullet callouts below. Best for: when an `asset_video` is provided.
+A reference grid image is attached. Use it to position elements precisely.
 
-If none of these fit, invent a descriptive template name and define its regions.
+The canvas is divided into a **20×20 grid** (each cell = 5% of the slide):
+- **Columns A–U** (left → right): A=0%, B=5%, C=10%, D=15%, E=20%, F=25%, G=30%, H=35%,
+  I=40%, J=45%, K=50%, L=55%, M=60%, N=65%, O=70%, P=75%, Q=80%, R=85%, S=90%, T=95%, U=100%
+- **Rows 00–20** (top → bottom): 00=0%, 01=5%, 02=10%, 03=15%, 04=20%, 05=25%, 06=30%,
+  07=35%, 08=40%, 09=45%, 10=50%, 11=55%, 12=60%, 13=65%, 14=70%, 15=75%, 16=80%,
+  17=85%, 18=90%, 19=95%, 20=100%
 
-## OUTPUT FORMAT — Return ONLY valid JSON:
+**Specify each element's box with two grid intersection IDs:**
+`"box": {{"tl": "B01", "br": "U03"}}` — top-left corner ID and bottom-right corner ID.
+
+Grid ID = 1 letter (column) + 2 digits (row). Examples:
+- `"A00"` = top-left of canvas, `"U20"` = bottom-right
+- `"B01"` = (x=0.05, y=0.05) — first safe inner column and row
+- `"K10"` = (x=0.50, y=0.50) — center
+
+**Typical layout positions (use as reference):**
+
+| Element | tl | br | Description |
+|---------|----|----|-------------|
+| Full-width title | B01 | U03 | x=0.05, y=0.05, w=0.95, h=0.10 |
+| Subtitle below title | B03 | U04 | x=0.05, y=0.15, h=0.05 |
+| Left figure (2-col) | B04 | K18 | x=0.05, y=0.20, w=0.45, h=0.70 |
+| Right bullets (2-col) | L04 | T18 | x=0.55, y=0.20, w=0.40, h=0.70 |
+| Wide table/chart (above bullets) | B04 | T13 | x=0.05, y=0.20, w=0.90, h=0.45 |
+| Bullets below wide table | B13 | T19 | x=0.05, y=0.65, w=0.90, h=0.30 |
+| Wide figure (solo, no bullets) | B04 | T19 | x=0.05, y=0.20, w=0.90, h=0.75 |
+| Wide equation row | B03 | U06 | x=0.05, y=0.15, w=0.95, h=0.15 |
+| Full-body content | B04 | U19 | x=0.05, y=0.20, w=0.95, h=0.75 |
+
+## INSTRUCTIONS
+
+1. Study the reference layout examples above. Take inspiration from their structure and signatures.
+2. Choose element types that best match the content (figures → F or D, tables → TAB, bullets → B, etc.).
+3. **Position elements using the grid** — choose tl/br IDs from the image so elements do NOT share any grid cells. Keep ≥1 cell (5%) margin from the canvas edge (start at col B / row 01 minimum).
+4. **Figure/table sizing — MINIMUM BOX REQUIREMENTS (strictly enforced):**
+   - Every figure/table element (type F, D, CH, TAB) MUST span at least **10 grid cells wide AND 10 grid cells tall** (i.e. br_col − tl_col ≥ 10 AND br_row − tl_row ≥ 10). Smaller boxes produce unreadable thumbnails.
+   - **Wide tables and charts (TAB, CH)**: minimum width is 12 cells (60% of slide). Place them at the **TOP** of the body (starting at row 04) so the full width is visible. Example: `{{"tl":"B04","br":"T13"}}`.
+   - **Figure + bullets layout**: figure gets the LEFT ~11 columns (tl=B04, br=K18); bullets get the RIGHT ~8 columns (tl=L04, br=T18). NEVER give the figure fewer than 8 cells wide.
+   - **Figure alone (no bullets)**: figure fills most of the body — use at least `{{"tl":"B04","br":"T19"}}`.
+   - **NEVER** place a figure in a small corner box (w < 8 cells OR h < 8 cells is forbidden).
+5. Generate a descriptive `layout_signature` using `|` (rows) and `-` (side-by-side) notation.
+6. Set `layout_tags` to descriptive keywords (e.g. "two_col", "figure_left", "method", "results").
+
+## OUTPUT FORMAT — Return ONLY valid LayoutSpec v1 JSON:
 
 {{
-  "layout_template": "two_col_fig_left",
+  "version": 1,
+  "layout_type": "two-column layout: figure left, bullets right",
+  "layout_tags": ["two_col", "figure_left", "method"],
+  "layout_signature": "T|F-B",
   "background_color": "#FFFFFF",
-  "layout_regions": {{
-    "title": {{"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.1}},
-    "figure": {{"x": 0.05, "y": 0.2, "w": 0.45, "h": 0.7}},
-    "video": {{"x": 0.05, "y": 0.2, "w": 0.45, "h": 0.7}},
-    "bullets": {{"x": 0.55, "y": 0.25, "w": 0.4, "h": 0.6}}
-  }},
-  "has_figure": true,
-  "has_video": false,
-  "style_rationale": "Two-column layout with figure on left is ideal for showing the architecture diagram alongside explanatory bullets."
+  "elements": [
+    {{
+      "id": "title",
+      "type": "T",
+      "content_ref": "elements.title",
+      "box": {{"tl": "B01", "br": "U03"}},
+      "style": {{"font_size": 40, "bold": true, "align": "left"}}
+    }},
+    {{
+      "id": "figure",
+      "type": "F",
+      "content_ref": "elements.figure",
+      "box": {{"tl": "B04", "br": "K19"}},
+      "constraints": {{"keep_aspect": true}}
+    }},
+    {{
+      "id": "bullets",
+      "type": "B",
+      "content_ref": "elements.bullets",
+      "box": {{"tl": "L04", "br": "T19"}},
+      "style": {{"font_size": 24, "min_font_size": 16}}
+    }}
+  ],
+  "global_constraints": {{
+    "no_overlap": true,
+    "no_overflow": true,
+    "min_font_size": 14
+  }}
 }}
 
 ## STRICT RULES:
-1. **Region keys**: Only use `title`, `bullets`, `figure`, `video` as region keys. Do NOT invent keys like `callout_1`, `table`, etc.
-2. **Coordinates**: All x/y/w/h values must be normalized (0.0 to 1.0). Regions must not overlap.
-3. **has_figure**: Set to `true` only if the content summary has relevant figures. If no figure is available, omit `figure` from regions.
-4. **has_video**: Set to `true` only if `scene_context` specifically assigns an `asset_video`. If true, include the `video` region. Do not include both `figure` and `video` unless space permits.
-5. **No builds**: Do NOT include `build_skeleton`, `expected_build_steps`, or any animation information.
-6. Output ONLY valid JSON, no markdown fences, no explanation.
-
-IMPORTANT FIGURE ASPECT RATIO RULE:
-If the extracted figure is nearly square, its placement is flexible. However, if the figure has a much larger dimension horizontally (like a wide rectangle), choose a layout with a wide figure region (e.g., `full_fig_with_callouts` or placing it spanning top/bottom) so it is not shrunk awkwardly. If it is very tall/vertical, choose a side-by-side template (e.g., `two_col_fig_left`) where it has vertical space. Ensure your chosen template and `layout_regions` coordinates are decided accordingly to preserve the figure's aspect ratio without shrinking it.
+1. **version** must be exactly `1`.
+2. **Element ids**: use descriptive ids matching the target names used in builds (e.g. `"title"`, `"figure"`, `"bullets"`, `"video"`).
+3. **Coordinates**: use grid IDs `{{"tl": "X##", "br": "X##"}}`. tl_col < br_col AND tl_row < br_row. No two elements may share overlapping grid cells. No element may start before col B or row 01.
+4. **has_figure** / **has_video**: do NOT include — these are inferred from element types.
+5. **No build info**: do NOT include build_skeleton, expected_build_steps, or animations.
+6. **Figure only if content has one**: include an `F`/`D`/`TAB`/`CH` element only if `content_summary` references a relevant figure or table.
+7. **Video element**: include a `"video"` element with type `F` only if `scene_context` assigns an `asset_video`.
+8. Output ONLY valid JSON. No markdown fences. No explanation.
+9. **ASCII quotes ONLY**: Every string in your JSON MUST use standard ASCII double-quote characters ("). NEVER use Unicode typographic or curly quotes (\u201c \u201d \u2018 \u2019). Replace any curly quotes from paper text with straight ASCII double-quotes.
 """
 
 ### ─────────────────────────────────────────────────
@@ -169,23 +301,39 @@ Scene context:
 
 {memory_context}
 
-Your job is to **draft the actual content** (title, bullets, audio, figure choice, and duration) that fits into this layout. You do NOT decide the layout — that is already set. You also do NOT decide builds or animations — those will be planned later based on your drafted content.
+{canvas_constraints}
+
+Your job is to **draft the actual content** (title, bullets, audio, figure choice, equations, and duration) that fits into this layout. You do NOT decide the layout — that is already set. You also do NOT decide builds or animations — those will be planned later based on your drafted content.
 
 ## OUTPUT FORMAT — Return ONLY valid JSON:
 
 {{
-  "title": "A clear, concise slide title",
-  "audio_content": "Full narration transcript for this entire scene. Should be natural, conversational, and cover all key points. The duration should be based on the length of this transcript.",
+  "title": "A clear, concise slide title (≤ 8 words)",
+  "subtitle": "Optional one-line subtitle — ONLY include if the style plan has an ST element",
+  "audio_content": "Full narration transcript for this entire scene. Natural, conversational. Covers all key points.",
   "duration_sec": 8.5,
   "bullets": [
-    "First concise bullet point",
-    "Second concise bullet point",
-    "Third concise bullet point"
+    "Short punchy bullet (≤ 10 words)",
+    "Another short bullet"
+  ],
+  "equations": [
+    "Eq. 3: \\mathrm{{GELU}}(x) \\approx 0.125x^2 + 0.5x + 0.25",
+    "Eq. 4: h_l = g_l(b_l + h_{{l-1}}) + h_{{l-1}}"
   ],
   "figure": {{
     "type": "paper_figure",
     "ref": "Figure X",
     "caption": "Brief caption describing the figure"
+  }},
+  "figure_2": {{
+    "type": "paper_figure",
+    "ref": "Figure Y",
+    "caption": "Brief caption for second figure — ONLY include when layout has a 2nd F element"
+  }},
+  "figure_3": {{
+    "type": "paper_figure",
+    "ref": "Figure Z",
+    "caption": "Brief caption for third figure — ONLY include when layout has a 3rd F element"
   }},
   "video": {{
     "type": "asset_video",
@@ -197,15 +345,21 @@ Your job is to **draft the actual content** (title, bullets, audio, figure choic
 }}
 
 ## STRICT RULES:
-1. **Number of bullets**: Write 2-4 concise, impactful bullets that cover the key points from the extracted content.
-2. **Figure/Video assignment**: 
-   - Assign `figure` ONLY if the content summary's `key_figures` has relevant images. 
-   - Assign `video` ONLY if the `scene_context` assigns an `asset_video`.
-   - If the style plan omits `has_figure` or `has_video`, omit the respective block completely.
-3. **Bullet text**: Each bullet should be concise (under 15 words preferred), impactful, and directly derived from `extracted_content`. Not a copy — a focused summary.
-4. **audio_content**: Natural narration covering all bullet points AND the video clip action if a video is present. 
-5. **duration_sec**: First, draft the `audio_content`. Then, CALCULATE the duration: `duration_sec = word_count_of_audio / 2.5`. Do NOT guess. If the stats say 8s but you wrote 40 words, `duration_sec` MUST be 16.0.
-6. Output ONLY valid JSON, no markdown fences, no explanation.
+1. **Number of bullets**: Follow the Canvas Constraints — NEVER exceed the stated maximum. Default to 2–3 bullets. More bullets = smaller text = harder to read.
+2. **Bullet brevity**: Each bullet MUST be ≤ 10 words. No sub-clauses. No semicolons joining two ideas. Split long ideas into separate bullets or drop them entirely.
+3. **Subtitle**: Include `subtitle` ONLY if the style plan has an ST (subtitle) element. If no ST element, omit `subtitle` entirely.
+4. **Figure/Video assignment**:
+   - Assign `figure` for the FIRST key figure — ONLY if the style plan has ≥1 F/D/CH/TAB element.
+   - If the style plan has a SECOND F/D/CH/TAB element (content_ref `elements.figure_2`), assign the second key figure to `figure_2`.
+   - If the style plan has a THIRD F/D/CH/TAB element (content_ref `elements.figure_3`), assign the third key figure to `figure_3`.
+   - Match the number of figures to the number of F/D/CH/TAB elements in the style plan — do NOT add more figures than there are figure regions.
+   - Assign `video` ONLY if `scene_context` has an `asset_video`.
+   - Omit a figure/video block completely if not applicable.
+5. **Equations**: Include `equations` ONLY if the style plan has an EQ element. Write each equation as a **matplotlib-compatible LaTeX math string** — use backslash commands: \\alpha, \\beta, \\gamma, \\sigma, \\mathrm{{GELU}}, \\mathrm{{softmax}}, subscripts _{{...}}, superscripts ^{{...}}, \\approx, \\cdot, \\sum, \\prod, \\frac{{a}}{{b}}, etc. Format each entry as "Eq. N: <latex_string>". Example: "Eq. 6: h_l = g_l(b_l + h_{{l-1}}) + h_{{l-1}}", "Eq. 7: g_l(z) = \\alpha \\cdot W_u \\cdot \\mathrm{{GELU}}(W_d \\cdot z)". Omit if no EQ element.
+6. **audio_content**: Natural narration covering ALL bullets and equations. Write this FIRST.
+7. **duration_sec**: CALCULATE as `word_count(audio_content) / 2.5`. Do NOT guess.
+8. Output ONLY valid JSON, no markdown fences, no explanation.
+9. **ASCII quotes ONLY**: Every string in your JSON MUST use standard ASCII double-quote characters ("). NEVER use Unicode typographic or curly quotes (\u201c \u201d \u2018 \u2019). Replace any curly quotes from paper text with straight ASCII double-quotes.
 """
 
 ### ─────────────────────────────────────────────────
@@ -233,11 +387,26 @@ Your job is to:
   "expected_build_steps": 3,
   "elements": {{
     "title": "The slide title from the draft",
+    "subtitle": "Optional subtitle from draft — omit key entirely if not in draft",
     "figure": {{
       "type": "paper_figure",
       "ref": "Figure X",
       "caption": "Caption from draft"
     }},
+    "figure_2": {{
+      "type": "paper_figure",
+      "ref": "Figure Y",
+      "caption": "Caption for second figure — omit key entirely if not in draft"
+    }},
+    "figure_3": {{
+      "type": "paper_figure",
+      "ref": "Figure Z",
+      "caption": "Caption for third figure — omit key entirely if not in draft"
+    }},
+    "equations": [
+      "Eq. 3: \\mathrm{{GELU}}(x) \\approx 0.125x^2 + 0.5x + 0.25",
+      "Eq. 7: g_l(z) = \\alpha \\cdot W_u \\cdot \\mathrm{{GELU}}(W_d \\cdot z)"
+    ],
     "bullets": [
       "First bullet",
       "Second bullet"
@@ -249,7 +418,9 @@ Your job is to:
       "time_offset_sec": 0.0,
       "actions": [
         {{"type": "show", "target": "title"}},
-        {{"type": "show", "target": "figure"}}
+        {{"type": "show", "target": "figure"}},
+        {{"type": "show", "target": "figure_2"}},
+        {{"type": "show", "target": "equation"}}
       ],
       "audio_segment": "Opening narration for this build step.",
       "visual_emphasis": []
@@ -276,16 +447,18 @@ Your job is to:
 }}
 
 ## STRICT RULES:
-1. **Build count**: `expected_build_steps` = 1 + number_of_bullets. Build 0 shows title (and figure/video if present), then one build per bullet.
+1. **Build count**: `expected_build_steps` = 1 + number_of_bullets. Build 0 shows title (and figure/equation/video if present), then one build per bullet.
 2. **One bullet per build**: After build 0, each build reveals exactly ONE bullet. `bullets[0]` in build 1, `bullets[1]` in build 2, etc.
-3. **Build 0**: Always shows `title` (and `figure`/`video` if present). Never shows bullets in build 0.
+3. **Build 0**: Always shows `title` (and `figure`/`video`/`equation` if present). Never shows bullets in build 0.
 4. **Audio segments**: Split the `audio_content` from the draft into segments. Each build's `audio_segment` must be non-empty and correspond to what that build reveals.
 5. **Bullet ordering**: Assign bullets to builds in the order that creates the best storytelling flow for the audience.
 6. **time_offset_sec**: Space evenly across the total time. For N builds over T seconds: offsets at 0, T/N, 2T/N, etc.
 7. **visual_emphasis**: Always set to empty list `[]`.
-8. **Action targets**: Only use targets that exist in `elements`: `title`, `figure`, `video`, `bullets[0]`, `bullets[1]`, etc.
-9. **elements**: Copy the drafted title, figure, video, and bullets exactly — do not modify the text content.
+8. **Action targets**: Only use targets that exist in `elements`: `title`, `figure`, `figure_2`, `figure_3`, `video`, `equation`, `bullets[0]`, `bullets[1]`, etc. IMPORTANT: the equation action target is always the string `"equation"` — NEVER `"equations"`, `"equations[0]"`, or any indexed form. The renderer renders all equations in the region at once. For multiple figures use `figure` for the first, `figure_2` for the second, `figure_3` for the third in Build 0 actions.
+9. **elements**: Copy the drafted title, subtitle, figure, figure_2, figure_3, video, equations, and bullets exactly — do not modify text. Omit a key entirely if not present in the draft (e.g. no `equations` key if draft has none, no `figure_2` key if draft has none, no `subtitle` key if draft has none).
 10. Output ONLY valid JSON, no markdown fences, no explanation.
+11. **ASCII quotes ONLY**: Every string in your JSON MUST use standard ASCII double-quote characters ("). NEVER use Unicode typographic or curly quotes (\u201c \u201d \u2018 \u2019). Replace any curly quotes from paper text with straight ASCII double-quotes.
+12. **LaTeX equations**: When writing equation strings in JSON, always use double backslashes for LaTeX commands so they survive JSON serialization. For example: `"\\\\frac{{a}}{{b}}"`, `"\\\\approx"`, `"\\\\right)"`, `"\\\\alpha"`. A single backslash in a JSON string (e.g. `"\\frac"`) is a JSON escape sequence — use `"\\\\frac"` to produce a literal backslash that LaTeX needs.
 """
 
 ### ─────────────────────────────────────────────────

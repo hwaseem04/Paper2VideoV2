@@ -289,14 +289,61 @@ def _extract_json_candidates(raw: str) -> List[str]:
     candidates.append(raw.strip())
     return candidates
 
-def _load_json_dict(raw: str) -> JSONType:
+
+def _is_truncated_json(text: str) -> bool:
+    """Return True if *text* appears to be JSON that was cut off mid-output.
+
+    Two conditions signal truncation:
+    1. Structural depth > 0 at end-of-string — one or more '{' or '[' was
+       opened but never closed (e.g. the response ends with
+       ``{"id": "foo", "box": {"x": 0.05, "y": 0.``).
+    2. Depth == 0 but still inside a string literal — the last unescaped
+       double-quote opened a string that was never closed.
+
+    Bracket/brace characters inside string literals are ignored so embedded
+    JSON strings don't confuse the depth counter.  Backslash escapes inside
+    strings are skipped so ``\"`` never falsely closes a string.
+    """
+    depth = 0
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == '\\':
+                i += 2          # skip the escaped character
+                continue
+            if ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch in ('{', '['):
+                depth += 1
+            elif ch in ('}', ']'):
+                depth -= 1
+        i += 1
+    # Condition 1: unclosed object / array
+    # Condition 2: still inside a string literal at end of input
+    return depth > 0 or in_string
+
+
+def _load_json_dict(raw) -> JSONType:
     """
     compatible with 3 conditions：
       1. original JSON
       2. double escaping JSON（ \\n \\u00b2）
       3. contains unescaped JSON metacharacters
     """
-    # 1. extract everything from  ```json ... ``` or ``` ... ``` 
+    # Fast-path: eval() already parsed the LLM response into a Python object.
+    # Accept it directly to avoid re-serialising and re-parsing.
+    if isinstance(raw, (dict, list)):
+        return raw
+    if not isinstance(raw, str):
+        raw = str(raw)
+
+    # 1. extract everything from  ```json ... ``` or ``` ... ```
     m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, flags=re.I)
     if m:
         body = m.group(1).strip()
@@ -349,7 +396,8 @@ def _load_json_dict(raw: str) -> JSONType:
                     fixed_body_ast = re.sub(r':\s*(IMAGE|TABLE|image|table)\b', r': "\1"', body, flags=re.IGNORECASE)
                     return ast.literal_eval(fixed_body_ast)
                 except Exception as e4:
-                    print(f"JSON parsing failed: {e3}\nUnquoted/AST failed: {e4}\nRaw input: {raw}")
+                    truncated = _is_truncated_json(raw)
+                    print(f"JSON parsing failed: {e3}\nUnquoted/AST failed: {e4}\nTruncated={truncated}\nRaw input: {raw}")
                     return None
 
 

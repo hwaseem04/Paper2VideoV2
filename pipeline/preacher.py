@@ -252,7 +252,11 @@ class Preacher:
 
         # SlideRenderer
         try:
-            self.slide_renderer = SlideRenderer(self.work_dir, self.pdf_path, tts_engine=self.audio_tool)
+            self.slide_renderer = SlideRenderer(
+                self.work_dir, self.pdf_path,
+                tts_engine=self.audio_tool,
+                planner_func=self.planner,
+            )
         except Exception as e:
             self.workflow_logger.warning(f"Failed to initialize SlideRenderer: {e}")
             self.slide_renderer = None
@@ -412,17 +416,23 @@ class Preacher:
             
         return "\n".join(context)
 
-    def retrieve_scene_style(self, scene_plan: dict) -> str:
+    def retrieve_scene_style(self, scene_plan: dict) -> dict:
         """
-        Retrieve context for low-level planning (scene specific).
+        Retrieve layout context for style planning (scene specific).
         Uses section-wise retrieval and queries style_db_refined_final.
+
+        Returns a dict with:
+          "layout_specs"        — list of LayoutSpec v1 dicts from metadata_v2.json (preferred)
+          "layout_descriptions" — list of fallback verbose strings for slides without layout_spec
+          "durations"           — duration statistics dict {min, max, avg}
         """
         narrative_role = scene_plan.get('narrative_role', '').lower()
         if not narrative_role or narrative_role not in ['introduction', 'method', 'experiments', 'results']:
-            # Fallback to general content analysis if narrative_role is missing or non-standard
             raise ValueError(f"Invalid narrative_role: {narrative_role}")
 
-        advice = []
+        layout_specs = []
+        layout_descriptions = []
+        durations = []
 
         try:
             # 1. Section-wise retrieval
@@ -431,80 +441,187 @@ class Preacher:
             if not index_dir.exists():
                 self.workflow_logger.warning(f"FAISS index directory for section '{narrative_role}' at {index_dir} not found. Falling back.")
                 return self._fallback_scene_style(scene_plan)
-            
-            # Use a temporary retriever for the specific section with OpenAI embeddings
+
             section_retriever = PaperRetriever(logger=self.workflow_logger, use_openai=True)
             section_retriever.load_index(index_dir, index_name=f"{narrative_role}.faiss", meta_name="metadata.json")
-            
+
             similar_papers = section_retriever.retrieve_similar_papers(
-                pdf_path=self.pdf_path, 
+                pdf_path=self.pdf_path,
                 k=k
             )
-            
+
             print(f"\n[USER LOG] Top {len(similar_papers)} papers for section '{narrative_role}':")
             for p in similar_papers:
                 print(f" - {p.get('paper_name', 'Unknown')}")
-            
-            # 2. Extract layouts from metadata
-            layout_descriptions = []
-            durations = []
+
+            # 2. Extract layouts from metadata (prefer metadata_v2.json if it exists)
             for p in similar_papers:
                 paper_title = p.get('paper_name', '')
-                if paper_title in self.style_db:
-                    meta_path = Path(self.style_db[paper_title])
-                    if meta_path.exists():
-                        with open(meta_path, "r") as f:
-                            meta = json.load(f)
-                            for slide in meta.get("slides", []):
-                                if slide.get("slide_section", "").lower() == narrative_role:
-                                    # Handle duration from t_start/t_end
-                                    duration = slide.get("t_end", 0) - slide.get("t_start", 0)
-                                    if duration > 0:
-                                        durations.append(duration)
-                                    # Handle layout description
-                                    layout_desc = slide.get("layout_structure", {}).get("layout_description", "")
-                                    if layout_desc:
-                                        layout_descriptions.append(layout_desc)
-            
-            if layout_descriptions:
-                advice.append(f"Reference Layouts for '{narrative_role}' section from similar papers:")
-                sampled_descriptions = random.sample(layout_descriptions, min(5, len(layout_descriptions)))
-                for i, desc in enumerate(sampled_descriptions):
-                    advice.append(f"- Example {i+1}: {desc}")
-                
-                if durations:
-                    avg_dur = sum(durations) / len(durations)
-                    min_dur = min(durations)
-                    max_dur = max(durations)
-                    advice.append(f"\nDuration statistics for this section (from references): min={min_dur:.1f}s, max={max_dur:.1f}s, avg={avg_dur:.1f}s.")
-            else:
-                self.workflow_logger.warning(f"No layout descriptions found in style DB for section '{narrative_role}'. Falling back.")
+                if paper_title not in self.style_db:
+                    continue
+                meta_path = Path(self.style_db[paper_title])
+                if not meta_path.exists():
+                    continue
+
+                # Prefer LayoutSpec v1 from metadata_v2.json
+                v2_path = meta_path.parent / "metadata_v2.json"
+                load_path = v2_path if v2_path.exists() else meta_path
+
+                with open(load_path, "r") as f:
+                    meta = json.load(f)
+
+                for slide in meta.get("slides", []):
+                    if slide.get("slide_section", "").lower() != narrative_role:
+                        continue
+
+                    # Accumulate duration stats
+                    dur = slide.get("t_end", 0) - slide.get("t_start", 0)
+                    if dur > 0:
+                        durations.append(dur)
+
+                    ls = slide.get("layout_structure", {})
+
+                    # Try LayoutSpec v1 first
+                    spec = ls.get("layout_spec")
+                    if (
+                        spec
+                        and isinstance(spec, dict)
+                        and spec.get("version") == 1
+                        and spec.get("elements")
+                    ):
+                        layout_specs.append(spec)
+                    else:
+                        # Fall back to verbose description
+                        desc = ls.get("layout_description", "")
+                        if desc:
+                            layout_descriptions.append(desc)
+
+            if not layout_specs and not layout_descriptions:
+                self.workflow_logger.warning(f"No layout data found in style DB for section '{narrative_role}'. Falling back.")
                 return self._fallback_scene_style(scene_plan)
+
+            # Sample to avoid overwhelming the prompt (max 5 specs, max 3 descriptions)
+            import random as _random
+            sampled_specs = _random.sample(layout_specs, min(5, len(layout_specs)))
+            sampled_descs = _random.sample(layout_descriptions, min(3, len(layout_descriptions)))
+
+            # On-the-fly conversion: turn sampled verbose descriptions into LayoutSpec v1
+            # (used when metadata_v2.json doesn't exist yet — before running style_db_migrate.py)
+            if sampled_descs and not sampled_specs:
+                self.workflow_logger.info(
+                    f"  No pre-migrated LayoutSpecs found. Converting {len(sampled_descs)} "
+                    "descriptions on-the-fly via LLM..."
+                )
+                for desc in sampled_descs:
+                    converted = self._desc_to_layout_spec(desc)
+                    if converted:
+                        sampled_specs.append(converted)
+                sampled_descs = []  # consumed — don't send as fallback too
+
+            duration_stats = {}
+            if durations:
+                duration_stats = {
+                    "min": round(min(durations), 1),
+                    "max": round(max(durations), 1),
+                    "avg": round(sum(durations) / len(durations), 1),
+                }
+
+            self.workflow_logger.info(
+                f"  Retrieved {len(sampled_specs)} LayoutSpec examples + "
+                f"{len(sampled_descs)} fallback descriptions for '{narrative_role}'."
+            )
+
+            return {
+                "layout_specs": sampled_specs,
+                "layout_descriptions": sampled_descs,
+                "durations": duration_stats,
+            }
 
         except Exception as e:
             self.workflow_logger.warning(f"Scene retrieval failed: {e}")
             import traceback
             self.workflow_logger.error(traceback.format_exc())
             return self._fallback_scene_style(scene_plan)
-        
-        return "\n".join(advice)
 
-    def _fallback_scene_style(self, scene_plan: dict) -> str:
-        """Standard template fallback when retrieval fails."""
-        self.workflow_logger.info("Falling back to standard template based on section.")
-        # Re-extract descriptive keywords for fallback
-        # First check stage1 extract? No, use plan
+    def _fallback_scene_style(self, scene_plan: dict) -> dict:
+        """Standard template fallback when retrieval fails.
+        Returns the same dict format as retrieve_scene_style().
+        """
+        self.workflow_logger.info("Falling back to standard description-based style hints.")
         scene_desc = f"{scene_plan.get('summary', '')} {scene_plan.get('title', '')}".lower()
-        advice = ["WARNING: Retrieval-based style advice unavailable. Using standard template."]
-        
+
         if any(w in scene_desc for w in ['result', 'performance', 'accuracy', 'table', 'chart', 'graph']):
-             advice.append("Detected 'Results' content: Consider a 'full_fig_with_callouts' or 'two_row_charts' layout.")
+            desc = "Two-column layout: results table on the left, supporting chart on the right. Clean white background, title at top."
         elif any(w in scene_desc for w in ['method', 'architecture', 'model', 'diagram', 'pipeline']):
-             advice.append("Detected 'Methodology' content: Consider a 'two_col_fig_left' layout to show the architecture.")
+            desc = "Two-column layout: architecture diagram on the left, bullet-point explanations on the right."
         else:
-             advice.append("General Content: Default to 'two_col_bullets_left' or 'one_col_bullets'.")
-        
-        return "\n".join(advice)
+            desc = "Single-column layout: title at top, bullet points below covering the main points."
+
+        return {
+            "layout_specs": [],
+            "layout_descriptions": [desc],
+            "durations": {},
+        }
+
+    # ── Conversion prompt (kept here to avoid importing migration script) ─────
+    _LAYOUT_SPEC_CONVERSION_PROMPT = """\
+You are a slide layout expert. Convert this layout description to a LayoutSpec v1 JSON.
+
+layout_description:
+{layout_description}
+
+## Element Types
+T=title, ST=subtitle, B=bullets, P=paragraph, EQ=equation, L=sub-label,
+META=logos/authors, F=figure/image, D=diagram, CH=chart, TAB=table, QR=qr-code
+
+## Layout Signature
+Use | for vertical rows and - for horizontal groups. E.g. T|F-B, F, T|TAB-CH
+
+## Required JSON format (version must be integer 1):
+{{
+  "version": 1,
+  "layout_type": "<short label>",
+  "layout_tags": ["<tag1>", "<tag2>"],
+  "layout_signature": "<sig>",
+  "background_color": "#FFFFFF",
+  "elements": [
+    {{"id": "title", "type": "T", "content_ref": "elements.title",
+      "box": {{"x": 0.05, "y": 0.03, "w": 0.90, "h": 0.10}},
+      "style": {{"font_size": 40, "bold": true}}}}
+  ],
+  "global_constraints": {{"no_overlap": true, "no_overflow": true, "min_font_size": 14}}
+}}
+
+Return ONLY valid JSON. No markdown fences. No explanation.
+"""
+
+    def _desc_to_layout_spec(self, layout_description: str) -> dict | None:
+        """Convert a verbose layout_description string to a LayoutSpec v1 dict via LLM.
+
+        Uses self.planner (the same LLM client used by all other planners).
+        Returns None if conversion fails.
+        """
+        prompt = self._LAYOUT_SPEC_CONVERSION_PROMPT.format(
+            layout_description=layout_description
+        )
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                raw = self.planner(prompt=prompt)
+                # Strip Python triple-quote wrappers the LLM sometimes adds
+                raw = raw.strip().strip('"""').strip("'''").strip()
+                parsed = _load_json_dict(raw)
+                if parsed and isinstance(parsed, dict):
+                    if str(parsed.get("version", "")) == "1":
+                        parsed["version"] = 1
+                        if "elements" in parsed and isinstance(parsed["elements"], list):
+                            return parsed
+            except Exception as e:
+                self.workflow_logger.warning(
+                    f"  _desc_to_layout_spec attempt {attempt+1} failed: {e}"
+                )
+        self.workflow_logger.warning("  _desc_to_layout_spec: conversion failed. Skipping this description.")
+        return None
 
     def _set_constants(self) -> None:
         self.degra_subtask_dict: dict[Degradation, Subtask] = {
@@ -878,7 +995,21 @@ class Preacher:
             style_plan = self.style_planner.style_plan_by_llm(self.pdf_path, self.scene_idx, part_plan, content_summary, style_advice)
             with open(style_file, "w") as f:
                 json.dump(style_plan, f, indent=4)
-        
+
+        # Augment LayoutSpec v1 with backward-compatible fields needed by Stage 3 and Stage 4.
+        # Stage 3 (low_level_planning_prompt) checks has_figure / has_video to decide whether
+        # to include a figure/video block. Stage 4 (style_refiner) reads layout_template,
+        # layout_regions, and has_figure directly. Without these, figures are silently dropped.
+        if style_plan.get("version") == 1:
+            elem_types = {e.get("type", "") for e in style_plan.get("elements", [])}
+            elem_ids   = {e.get("id", "")   for e in style_plan.get("elements", [])}
+            style_plan.setdefault("has_figure", bool(elem_types & {"F", "D", "TAB", "CH"}))
+            style_plan.setdefault("has_video",  "video" in elem_ids)
+            style_plan.setdefault("layout_template", style_plan.get("layout_type", "custom"))
+            style_plan.setdefault("layout_regions",  {
+                e["id"]: e["box"] for e in style_plan.get("elements", [])
+            })
+
         # ── Stage 3: Low-Level Content Drafting (and Duration) ──
         low_file = self.log_dir / f"low_{self.scene_idx}.json"
         if os.path.exists(low_file):
@@ -921,11 +1052,21 @@ class Preacher:
         # ── Merge everything into final plan ──
         merged_plan = part_plan.copy()
         merged_plan["extracted_content"] = content_summary.get("extracted_content", "")
-        merged_plan["layout"] = {
-            "template": style_plan.get("layout_template", "one_col_bullets"),
-            "background_color": style_plan.get("background_color", "#FFFFFF"),
-            "regions": style_plan.get("layout_regions", {}),
-        }
+
+        # Handle both LayoutSpec v1 output and old layout_template/layout_regions format
+        if style_plan.get("version") == 1:
+            # New LayoutSpec v1 format from style planner
+            from .layout.layout_compile import spec_to_layout_dict
+            from .layout.layout_spec import LayoutSpec
+            spec = LayoutSpec.from_dict(style_plan)
+            merged_plan["layout"] = spec_to_layout_dict(spec)
+        else:
+            # Legacy format (backward compatibility)
+            merged_plan["layout"] = {
+                "template": style_plan.get("layout_template", "one_col_bullets"),
+                "background_color": style_plan.get("background_color", "#FFFFFF"),
+                "regions": style_plan.get("layout_regions", {}),
+            }
         # Merge refined output (elements, builds, style, audio_content, etc.)
         merged_plan.update(final_refined)
         # Add source, audio_content, prompt and duration from content draft

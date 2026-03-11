@@ -8,10 +8,11 @@ import json
 import logging
 
 class SlideRenderer:
-    def __init__(self, output_dir: Path, pdf_path: Path, tts_engine=None):
+    def __init__(self, output_dir: Path, pdf_path: Path, tts_engine=None, planner_func=None):
         self.output_dir = output_dir
         self.pdf_path = pdf_path
         self.tts_engine = tts_engine
+        self.planner_func = planner_func   # optional LLM for Gemini-based figure extraction
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger("SlideRenderer")
 
@@ -41,6 +42,10 @@ class SlideRenderer:
             except OSError:
                 return ImageFont.load_default()
 
+    def _make_font(self, size: int):
+        """Return a truetype body font at the requested size (falls back gracefully)."""
+        return self._load_font("Arial.ttf", size)
+
     def render_scene(self, scene_plan: dict, scene_idx: int) -> str:
         """
         Render a full scene video based on the plan.
@@ -48,10 +53,77 @@ class SlideRenderer:
         """
         scene_dir = self.output_dir / f"scene_{scene_idx}"
         scene_dir.mkdir(exist_ok=True)
-        
+
         layout = scene_plan.get("layout", {})
         elements = scene_plan.get("elements", {})
         builds = scene_plan.get("builds", [])
+
+        # ── LayoutSpec v1: validate, repair, and extract regions ─────────────
+        spec_dict = layout.get("spec")
+        if spec_dict and isinstance(spec_dict, dict) and spec_dict.get("version") == 1:
+            try:
+                from pipeline.layout.layout_spec import LayoutSpec
+                from pipeline.layout import layout_validate
+                from pipeline.layout.layout_compile import compile_spec
+
+                spec = LayoutSpec.from_dict(spec_dict)
+                result = compile_spec(spec, scene_plan, self, run_repair=True)
+
+                # Merge repaired regions back into layout (backward-compatible)
+                layout = dict(layout)  # shallow copy so we don't mutate scene_plan
+                layout["regions"] = result["regions"]
+                # Preserve background_color from spec
+                if "background_color" not in layout:
+                    layout["background_color"] = spec_dict.get("background_color", "#FFFFFF")
+
+                # ── Add standard target aliases ──────────────────────────────
+                # Build actions use canonical targets ("figure", "bullets",
+                # "title", "video"). If the LLM chose non-standard element IDs
+                # (e.g. "architecture_diagram" instead of "figure"), we inject
+                # aliases so _apply_build_actions can find them by type.
+                from pipeline.layout.layout_spec import RENDER_GROUP
+                _regions = dict(layout["regions"])
+                _orig    = dict(_regions)   # immutable snapshot — always read elem boxes from here
+                _added: set = set()
+                _figure_count = 0
+                for _elem in spec.elements:
+                    _std = RENDER_GROUP.get(_elem.type)
+                    if _std == "figure":
+                        # Map 1st F/D/CH/TAB element → "figure",
+                        #     2nd → "figure_2", 3rd → "figure_3", …
+                        # Read from _orig (not _regions) so that earlier writes
+                        # (e.g. _regions["figure"] = LEFT) don't corrupt later
+                        # lookups for elements whose id happens to be "figure".
+                        alias = "figure" if _figure_count == 0 else f"figure_{_figure_count + 1}"
+                        if _elem.id in _orig:
+                            _regions[alias] = _orig[_elem.id]
+                            self.logger.debug(
+                                f"Scene {scene_idx}: aliased region '{_elem.id}' → '{alias}'"
+                            )
+                        _figure_count += 1
+                    elif (
+                        _std in ("bullets", "title", "video", "equation")
+                        and _std not in _regions
+                        and _elem.id in _orig
+                        and _std not in _added
+                    ):
+                        _regions[_std] = _orig[_elem.id]
+                        _added.add(_std)
+                        self.logger.debug(
+                            f"Scene {scene_idx}: aliased region '{_elem.id}' → '{_std}'"
+                        )
+                layout["regions"] = _regions
+
+                if result["flags"].get("needs_split_slide"):
+                    self.logger.warning(
+                        f"Scene {scene_idx}: layout validator flagged needs_split_slide. "
+                        "Consider splitting content across two slides."
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Scene {scene_idx}: LayoutSpec v1 compile failed ({e}). "
+                    "Falling back to layout.regions."
+                )
 
         clips = []
         
@@ -345,35 +417,75 @@ class SlideRenderer:
                     if content and region:
                         self._date_text(draw, content, region, self.title_font, align="center")
 
+                elif target == "subtitle":
+                    content = elements.get("subtitle")
+                    region = regions.get("subtitle")
+                    if content and region:
+                        subtitle_font = self._make_font(28)
+                        self._date_text(draw, content, region, subtitle_font, align="center")
+
                 elif target == "figure":
                     fig_info = elements.get("figure")
                     region = regions.get("figure")
                     if fig_info and region:
                         self._draw_figure(new_img, fig_info, region)
-                        
+
+                elif target and target.startswith("figure_") and target[7:].isdigit():
+                    # Handle indexed figures: figure_2, figure_3, etc.
+                    fig_info = elements.get(target)
+                    region = regions.get(target)
+                    if fig_info and region:
+                        self._draw_figure(new_img, fig_info, region)
+
+                elif (
+                    target == "equation"
+                    or target == "equations"
+                    or (target and (
+                        target.startswith("equation[")
+                        or target.startswith("equations[")
+                    ))
+                ):
+                    # Covers: "equation", "equations", "equation[0]", "equations[0]"
+                    eq_content = elements.get("equations") or elements.get("equation")
+                    region = (
+                        regions.get("equations")
+                        or regions.get("equation")
+                        or regions.get("polynomial_equations")
+                    )
+                    if eq_content and region:
+                        self._draw_equations(new_img, draw, eq_content, region, layout)
+
                 elif target == "video":
-                    pass # disabled # For video, just draw a placeholder bounding box or black rect under it
-                    # # The actual video compositing happens in `render_scene` using moviepy
-                    # region = regions.get("video")
-                    # if region:
-                    #     x, y, w, h = self._to_px(region)
-                    #     draw.rectangle([x, y, x+w, y+h], fill="black")
+                    pass  # disabled — compositing handled by moviepy
 
                 else:
                     # Generic handling for any other target
-                    element_key = action.get("content_ref", target)
+                    # Check if this target corresponds to an EQ element via spec
+                    spec_dict = layout.get("spec")
+                    is_eq_target = False
+                    if spec_dict and isinstance(spec_dict, dict):
+                        from pipeline.layout.layout_spec import RENDER_GROUP
+                        for elem in spec_dict.get("elements", []):
+                            if elem.get("id") == target and RENDER_GROUP.get(elem.get("type", "")) == "equation":
+                                is_eq_target = True
+                                break
 
-                    if element_key in elements:
-                        content = elements[element_key]
+                    if is_eq_target:
+                        eq_content = elements.get("equations") or elements.get("equation") or elements.get(target)
                         region = regions.get(target)
-
-                        if region:
-                            if isinstance(content, str):
-                                font = self.title_font if "title" in target.lower() else self.body_font
-                                self._date_text(draw, content, region, font, align="center" if "title" in target.lower() else "left")
-
-                            elif isinstance(content, dict) and content.get("type") == "paper_figure":
-                                self._draw_figure(new_img, content, region)
+                        if eq_content and region:
+                            self._draw_equations(new_img, draw, eq_content, region, layout)
+                    else:
+                        element_key = action.get("content_ref", target)
+                        if element_key in elements:
+                            content = elements[element_key]
+                            region = regions.get(target)
+                            if region:
+                                if isinstance(content, str):
+                                    font = self.title_font if "title" in target.lower() else self.body_font
+                                    self._date_text(draw, content, region, font, align="center" if "title" in target.lower() else "left")
+                                elif isinstance(content, dict) and content.get("type") == "paper_figure":
+                                    self._draw_figure(new_img, content, region)
 
             elif atype == "highlight":
                  bbox = action.get("target_bbox")
@@ -392,13 +504,30 @@ class SlideRenderer:
                 bg_color = layout.get("background_color", "#FFFFFF")
                 draw.rectangle([bx, by, bx + bw, by + bh], fill=bg_color)
 
+                # ── Fixed bullet font size (36px) ────────────────────────────
+                # We use a fixed readable size rather than shrinking.
+                # The low-level planner is responsible for not generating too
+                # many / too verbose bullets (enforced via Canvas Constraints).
+                BULLET_FONT_SIZE = 36
+                BULLET_INDENT = 30
+                LINE_SPACING = 1.15
+                BULLET_GAP = 10
+
+                bullet_font = self._make_font(BULLET_FONT_SIZE)
                 bullet_y_offset = 0
 
                 for idx in sorted(cumulative_visible_bullets):
                     if idx < len(bullets):
+                        # Stop drawing if we've exhausted the region height
+                        if bullet_y_offset >= bh:
+                            self.logger.debug(
+                                f"Bullet region full at offset {bullet_y_offset}px "
+                                f"(region h={bh}px); remaining bullets clipped."
+                            )
+                            break
                         content = bullets[idx]
-                        height_used = self._draw_bullet(draw, content, bullet_region, bullet_y_offset)
-                        bullet_y_offset += height_used + 10
+                        height_used = self._draw_bullet(draw, content, bullet_region, bullet_y_offset, font=bullet_font)
+                        bullet_y_offset += height_used + BULLET_GAP
 
         return new_img, cumulative_visible_bullets
 
@@ -417,26 +546,36 @@ class SlideRenderer:
             safe_ref = ref_text.replace(" ", "_").replace(".", "").lower()
             temp_fig_path = self.output_dir / f"extracted_{safe_ref}.png"
             
-            # Use utils.slides.get_specific_element
-            from utils.slides import get_specific_element
-            
-            # Note: get_specific_element now takes (pdf, type, label, caption, output_path)
-            extracted = get_specific_element(
-                str(self.pdf_path), 
-                etype, 
-                ref_text, 
-                caption_text, 
-                str(temp_fig_path)
-            )
+            # --- Extraction: try Gemini vision first, then Docling fallback ---
+            extracted = ""
+            if self.planner_func is not None:
+                from utils.slides import get_figure_via_gemini
+                extracted = get_figure_via_gemini(
+                    str(self.pdf_path), ref_text, caption_text,
+                    str(temp_fig_path), self.planner_func,
+                )
+
+            if not (extracted and Path(extracted).exists() and Path(extracted).stat().st_size > 0):
+                # Fallback: Docling caption-matching
+                from utils.slides import get_specific_element
+                extracted = get_specific_element(
+                    str(self.pdf_path), etype, ref_text, caption_text, str(temp_fig_path)
+                )
 
             x, y, w, h = self._to_px(region)
             if Path(extracted).exists() and Path(extracted).stat().st_size > 0:
                 # Load and draw
                 fig_img = Image.open(extracted)
                 
-                # Resize to fit region while maintaining aspect ratio
-                fig_img.thumbnail((w, h), Image.Resampling.LANCZOS)
-                
+                # Scale to fill the region as much as possible while preserving
+                # aspect ratio.  Unlike thumbnail(), this ALSO upscales figures
+                # whose extracted PNG is smaller than the assigned box (e.g. a
+                # 300×300 px diagram in a 700×750 px region).
+                scale = min(w / fig_img.width, h / fig_img.height)
+                new_w = max(1, round(fig_img.width  * scale))
+                new_h = max(1, round(fig_img.height * scale))
+                fig_img = fig_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
                 # Center in region
                 draw_x = x + (w - fig_img.width) // 2
                 draw_y = y + (h - fig_img.height) // 2
@@ -476,7 +615,7 @@ class SlideRenderer:
                 self.logger.error(f"TTS failed: {e}")
         return None
 
-    def _draw_bullet(self, draw, text, region, bullet_y_offset=0):
+    def _draw_bullet(self, draw, text, region, bullet_y_offset=0, font=None):
         """
         Draw a bullet point with automatic text wrapping.
 
@@ -485,12 +624,16 @@ class SlideRenderer:
             text: Bullet text content
             region: Region dictionary with normalized coordinates
             bullet_y_offset: Y offset in pixels from region top (for dynamic positioning)
+            font: PIL ImageFont to use (defaults to self.body_font)
 
         Returns:
             Height in pixels consumed by this bullet (including wrapping)
         """
         if not region:
             return 0
+
+        if font is None:
+            font = self.body_font
 
         x, y, w, h = self._to_px(region)
 
@@ -503,42 +646,303 @@ class SlideRenderer:
         available_width = w - BULLET_INDENT - 20  # 20px right margin
 
         # Get font metrics for proper line height calculation
-        # Use ascent + descent for accurate font height
         try:
-            ascent, descent = self.body_font.getmetrics()
+            ascent, descent = font.getmetrics()
             font_height = ascent + descent
         except AttributeError:
-            # Fallback: use bounding box if getmetrics not available
-            bbox = self.body_font.getbbox("Ay")
+            bbox = font.getbbox("Ay")
             font_height = bbox[3] - bbox[1]
 
         # Apply standard line spacing (1.15x like Google Slides)
         line_height = int(font_height * LINE_SPACING)
 
         # Word-wrap the text
-        wrapped_lines = self._wrap_text(text, available_width, self.body_font)
+        wrapped_lines = self._wrap_text(text, available_width, font)
 
         # Calculate starting position
         current_y = y + bullet_y_offset
 
         # Draw bullet character on first line
-        draw.text((x, current_y), BULLET_CHAR, fill="black", font=self.body_font)
+        draw.text((x, current_y), BULLET_CHAR, fill="black", font=font)
+
+        # Region bottom boundary in absolute pixels
+        region_bottom = y + int(region["h"] * self.H)
 
         # Draw text lines with proper indentation
+        lines_drawn = 0
         for i, line in enumerate(wrapped_lines):
-            if i == 0:
-                # First line: positioned after bullet
-                text_x = x + BULLET_INDENT
-            else:
-                # Wrapped lines: indented to align with first line text
-                text_x = x + BULLET_INDENT
-
-            draw.text((text_x, current_y), line, fill="black", font=self.body_font)
+            # Clip: stop drawing if line would exceed the region bottom
+            if current_y >= region_bottom:
+                break
+            text_x = x + BULLET_INDENT
+            draw.text((text_x, current_y), line, fill="black", font=font)
             current_y += line_height
+            lines_drawn += 1
 
-        # Return total height consumed
-        total_height = len(wrapped_lines) * line_height
+        # Return total height consumed (only drawn lines)
+        total_height = lines_drawn * line_height
         return total_height
+
+    @staticmethod
+    def _repair_equation_escapes(text: str) -> str:
+        """Repair common JSON-mangled LaTeX backslash sequences.
+
+        LLMs sometimes emit single-backslash LaTeX commands in JSON strings.
+        Python's eval() (used to parse LLM responses) then interprets the
+        escape sequences as control characters, e.g.:
+          - \\a  → BEL  (0x07) — intended: \\alpha, \\approx
+          - \\b  → BS   (0x08) — intended: \\beta,  \\bar, \\begin
+          - \\t  → HT   (0x09) — intended: \\theta, \\tau
+          - \\v  → VT   (0x0B) — intended: \\vdots, \\vee
+          - \\f  → FF   (0x0C) — intended: \\frac,  \\forall
+          - \\r  → CR   (0x0D) — intended: \\right, \\rho
+
+        This method maps those control characters back to their LaTeX equivalents.
+        """
+        _CONTROL_TO_LATEX = {
+            '\x07': '\\a',   # BEL       → \a  (e.g. \alpha, \approx)
+            '\x08': '\\b',   # backspace → \b  (e.g. \beta, \bar, \begin)
+            '\x09': '\\t',   # tab       → \t  (e.g. \theta, \tau)
+            '\x0b': '\\v',   # vert-tab  → \v  (e.g. \vdots, \vee)
+            '\x0c': '\\f',   # form-feed → \f  (e.g. \frac, \forall)
+            '\x0d': '\\r',   # CR        → \r  (e.g. \right, \rho)
+        }
+        for ctrl, repl in _CONTROL_TO_LATEX.items():
+            text = text.replace(ctrl, repl)
+        return text
+
+    @staticmethod
+    def _to_latex_math(text: str) -> str:
+        """
+        Convert a plain-text / pseudo-LaTeX equation string to a matplotlib
+        mathtext-compatible LaTeX math string.  Only safe, unambiguous
+        substitutions are made.
+        """
+        import re
+        t = text.strip()
+
+        # Greek letters (lower then upper, longest names first to avoid
+        # partial matches, e.g. 'epsilon' before 'psi')
+        _GREEK_LOWER = [
+            'epsilon', 'theta', 'lambda', 'sigma', 'omega',
+            'alpha', 'beta', 'gamma', 'delta', 'kappa', 'mu', 'nu',
+            'xi', 'pi', 'rho', 'tau', 'phi', 'chi', 'psi', 'eta',
+        ]
+        _GREEK_UPPER = [
+            'Epsilon', 'Theta', 'Lambda', 'Sigma', 'Omega',
+            'Gamma', 'Delta', 'Xi', 'Pi', 'Phi', 'Psi',
+        ]
+        for name in _GREEK_LOWER + _GREEK_UPPER:
+            t = re.sub(rf'\b{name}\b', rf'\\{name}', t)
+
+        # Named ML/DL functions → \mathrm{}
+        for fn in ['GELU', 'ReLU', 'SiLU', 'softmax', 'sigmoid', 'Softmax']:
+            t = re.sub(rf'\b{fn}\b', rf'\\mathrm{{{fn}}}', t)
+
+        # Standard math functions → LaTeX built-ins
+        for fn in ['tanh', 'exp', 'log', 'sin', 'cos', 'max', 'min',
+                   'inf', 'sup', 'det', 'dim']:
+            t = re.sub(rf'\b{fn}\b', rf'\\{fn}', t)
+
+        return t
+
+    def _render_equation_image(self, eq_text: str, max_width: int,
+                               font_size: int = 34) -> 'Image.Image | None':
+        """
+        Render a single equation string as a PIL RGBA Image using
+        matplotlib's mathtext renderer (LaTeX-quality, no external LaTeX
+        installation required).  Returns None on any failure.
+        """
+        try:
+            import re
+            import io
+            import matplotlib
+            matplotlib.use('Agg')            # non-interactive backend
+            import matplotlib.pyplot as plt
+
+            # ── Repair JSON-mangled LaTeX escape sequences ───────────────────
+            # e.g. LLM wrote "\frac" in JSON → parsed as form-feed + "rac"
+            eq_text = self._repair_equation_escapes(eq_text)
+
+            # ── Strip common label prefixes: "Eq. 6:", "(6)", etc. ──────────
+            clean = re.sub(
+                r'^(?:Eq(?:uation)?\.?\s*\d+\s*[:\.)]\s*|\(\d+\)\s*)',
+                '', eq_text.strip(), flags=re.IGNORECASE
+            ).strip()
+
+            # ── Convert to LaTeX math ────────────────────────────────────────
+            # If the LLM already emitted LaTeX commands (backslash present),
+            # skip auto-substitution to avoid double-escaping.
+            if '\\' in clean:
+                latex_body = clean
+            else:
+                latex_body = self._to_latex_math(clean)
+            math_str = f'${latex_body}$'
+
+            # ── Render via matplotlib ────────────────────────────────────────
+            DPI = 150
+            # Generous initial size; we crop tightly after rendering.
+            fig_w_in = max(2.0, max_width / DPI)
+            fig, ax = plt.subplots(figsize=(fig_w_in, 1.6))
+            ax.set_axis_off()
+            fig.patch.set_alpha(0.0)    # transparent background
+            ax.patch.set_alpha(0.0)
+
+            ax.text(
+                0.5, 0.5, math_str,
+                ha='center', va='center',
+                fontsize=font_size,
+                color='#1E2878',        # dark navy blue
+                transform=ax.transAxes,
+            )
+
+            buf = io.BytesIO()
+            fig.savefig(
+                buf, format='png', dpi=DPI,
+                bbox_inches='tight', transparent=True,
+                pad_inches=0.08,
+            )
+            plt.close(fig)
+            buf.seek(0)
+
+            eq_img = Image.open(buf).convert('RGBA')
+
+            # ── Scale down if wider than the available region ───────────────
+            if eq_img.width > max_width:
+                scale  = max_width / eq_img.width
+                eq_img = eq_img.resize(
+                    (max_width, int(eq_img.height * scale)),
+                    Image.LANCZOS,
+                )
+
+            return eq_img
+
+        except Exception as e:
+            self.logger.debug(
+                f"Equation matplotlib render failed for '{eq_text[:60]}': {e}"
+            )
+            return None
+
+    def _draw_equations(self, img_canvas, draw, equations, region, layout):
+        """
+        Render equations into a slide region.
+
+        Attempts LaTeX-quality typesetting via matplotlib mathtext for each
+        equation, pasting the resulting image onto *img_canvas*.  Any equation
+        whose render fails falls back to plain styled text via *draw*.
+
+        Args:
+            img_canvas: PIL Image — the slide image to paste equation images onto
+            draw:        PIL ImageDraw — used for text fallback and background fill
+            equations:   str or list[str] — the equation content(s)
+            region:      Region dict with normalized coordinates
+            layout:      full layout dict (for background_color)
+        """
+        if not region or not equations:
+            return
+
+        # ── Normalise to list ────────────────────────────────────────────────
+        if isinstance(equations, str):
+            eq_list = [equations]
+        elif isinstance(equations, list):
+            eq_list = [str(e) for e in equations if e]
+        else:
+            eq_list = [str(equations)]
+
+        x, y, w, h = self._to_px(region)
+
+        # ── Clear region background ──────────────────────────────────────────
+        bg_color = layout.get("background_color", "#FFFFFF")
+        draw.rectangle([x, y, x + w, y + h], fill=bg_color)
+
+        # ── Attempt to render each equation as a matplotlib image ────────────
+        FALLBACK_FONT_SIZE = max(22, self.BODY_FONT_SIZE - 6)
+        fallback_font      = self._make_font(FALLBACK_FONT_SIZE)
+        ITEM_GAP           = 14   # px between stacked equations
+
+        items = []  # list of ('image', PIL.Image) | ('text', str)
+        for eq in eq_list:
+            rendered = self._render_equation_image(eq, w - 20)
+            if rendered is not None:
+                items.append(('image', rendered))
+            else:
+                items.append(('text', eq))
+
+        # ── Calculate total height needed ────────────────────────────────────
+        def _item_height(kind, item):
+            if kind == 'image':
+                return item.height
+            # text fallback: measure wrapped lines
+            try:
+                ascent, descent = fallback_font.getmetrics()
+                line_h = int((ascent + descent) * 1.35)
+            except AttributeError:
+                bb = fallback_font.getbbox("Ay")
+                line_h = int((bb[3] - bb[1]) * 1.35)
+            lines = self._wrap_text(item, w - 20, fallback_font)
+            return line_h * len(lines)
+
+        total_h_needed = sum(_item_height(k, v) for k, v in items)
+        total_h_needed += ITEM_GAP * max(0, len(items) - 1)
+
+        # ── Pre-scale ALL image items uniformly if the stack overflows ───────
+        # This ensures every equation gets a proportional share of the region
+        # rather than the first one consuming all available space.
+        if total_h_needed > h and h > 0:
+            scale = h / total_h_needed
+            scaled_items = []
+            for kind, item in items:
+                if kind == 'image':
+                    new_w = max(1, int(item.width * scale))
+                    new_h = max(1, int(item.height * scale))
+                    scaled_items.append(('image', item.resize((new_w, new_h), Image.LANCZOS)))
+                else:
+                    scaled_items.append((kind, item))
+            items = scaled_items
+            # Recompute total height after scaling
+            total_h_needed = sum(_item_height(k, v) for k, v in items)
+            total_h_needed += ITEM_GAP * max(0, len(items) - 1)
+
+        # ── Vertically center the stack in the region ────────────────────────
+        current_y    = y + max(0, (h - total_h_needed) // 2)
+        region_bottom = y + h
+
+        for kind, item in items:
+            if current_y >= region_bottom:
+                break
+
+            if kind == 'image':
+                # Centre horizontally; guard against residual overflow
+                avail_h = region_bottom - current_y
+                if avail_h <= 4:
+                    break  # Not enough space for any more items
+                if item.height > avail_h:
+                    scale = avail_h / item.height
+                    new_w = max(1, int(item.width * scale))
+                    item = item.resize((new_w, avail_h), Image.LANCZOS)
+                paste_x = x + max(0, (w - item.width) // 2)
+                img_canvas.paste(item, (paste_x, current_y), item)
+                current_y += item.height + ITEM_GAP
+
+            else:
+                # Fallback: plain dark-blue centered text
+                try:
+                    ascent, descent = fallback_font.getmetrics()
+                    line_h = int((ascent + descent) * 1.35)
+                except AttributeError:
+                    bb = fallback_font.getbbox("Ay")
+                    line_h = int((bb[3] - bb[1]) * 1.35)
+
+                for line in self._wrap_text(item, w - 20, fallback_font):
+                    if current_y >= region_bottom:
+                        break
+                    lbbox = fallback_font.getbbox(line)
+                    lw    = lbbox[2] - lbbox[0]
+                    draw_x = x + max(0, (w - lw) // 2)
+                    draw.text((draw_x, current_y), line,
+                              fill=(30, 30, 120), font=fallback_font)
+                    current_y += line_h
+                current_y += ITEM_GAP
 
     def _wrap_text(self, text, max_width, font):
         """
@@ -581,15 +985,36 @@ class SlideRenderer:
         return lines if lines else [text]
 
     def _date_text(self, draw, text, region, font, align="left"):
+        """Draw text with automatic word-wrapping clipped to the region box."""
         if not region: return
         x, y, w, h = self._to_px(region)
-        # Center horizontally if align center
-        draw_x = x
-        if align == "center":
-             # Estimate text width
-             text_width = font.getbbox(text)[2]
-             draw_x = x + (w - text_width) // 2
-        draw.text((draw_x, y), text, fill="black", font=font)
+
+        lines = self._wrap_text(text, w, font)
+
+        # Compute line height from font metrics
+        try:
+            ascent, descent = font.getmetrics()
+            line_height = ascent + descent + 4
+        except AttributeError:
+            bbox = font.getbbox("Ay")
+            line_height = (bbox[3] - bbox[1]) + 4
+
+        # Vertically center the text block within the region
+        total_text_h = len(lines) * line_height
+        current_y = y + max(0, (h - total_text_h) // 2)
+
+        for line in lines:
+            # Clip: stop if we're past the bottom of the region
+            if current_y >= y + h:
+                break
+            if align == "center":
+                lbbox = font.getbbox(line)
+                lw = lbbox[2] - lbbox[0]
+                draw_x = x + max(0, (w - lw) // 2)
+            else:
+                draw_x = x
+            draw.text((draw_x, current_y), line, fill="black", font=font)
+            current_y += line_height
 
     def _draw_highlight(self, draw, bbox):
         # bbox can be raw pixel coords [x1, y1, x2, y2] or normalized

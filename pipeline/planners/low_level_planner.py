@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from pipeline import prompts
-from utils.textwork import _load_json_dict, classify_response
+from utils.textwork import _load_json_dict, classify_response, _is_truncated_json
 
 class LowLevelPlanner:
     def __init__(self, planner_func, evaluator_func, workflow_logger):
@@ -30,14 +30,19 @@ class LowLevelPlanner:
             scene_context=json.dumps(part_plan, indent=2),
             duration_stat=json.dumps(duration_stat, indent=2),
             memory_context=memory_context,
+            canvas_constraints=self._compute_canvas_constraints(style_plan),
         )
         
         max_retries = 3
         for attempt in range(max_retries):
-            raw = eval(self.planner(
+            _response = self.planner(
                 prompt=prompt,
                 pdf_path=Path(pdf_path),
-            ))
+            )
+            try:
+                raw = eval(_response)
+            except Exception:
+                raw = _response  # eval failed; _load_json_dict handles raw strings
             self.workflow_logger.info(f"  Content draft scene {scene_idx} (Attempt {attempt+1}): {raw[:200] if isinstance(raw, str) else str(raw)[:200]}")
             
             parsed = _load_json_dict(raw)
@@ -45,9 +50,101 @@ class LowLevelPlanner:
                 return parsed
                 
             self.workflow_logger.warning(f"Content drafting parsing failed for scene {scene_idx} on attempt {attempt+1}. Retrying...")
-            prompt += f"\n\nERROR: The previous response was not valid JSON. Please ensure you output ONLY valid JSON without any truncated strings or formatting errors."
+            if _is_truncated_json(raw):
+                prompt += (
+                    "\n\nERROR: Your previous response was cut off mid-JSON — it hit the output "
+                    "token limit. Please produce a SHORTER version: use brief text values, omit "
+                    "optional/redundant fields, and if there are many elements reduce their count. "
+                    "The entire JSON must fit in a single response."
+                )
+            else:
+                prompt += "\n\nERROR: The previous response was not valid JSON. Please ensure you output ONLY valid JSON without any truncated strings or formatting errors."
             
         raise ValueError(f"Content drafting failed for scene {scene_idx} after {max_retries} attempts.")
+
+    @staticmethod
+    def _compute_canvas_constraints(style_plan: dict) -> str:
+        """
+        Derive a human-readable canvas constraints hint from the LayoutSpec.
+
+        Returns a formatted string injected into the prompt that tells the LLM:
+        - how many bullets physically fit in the bullet region
+        - what font size will be used
+        - max recommended words per bullet
+        """
+        SLIDE_HEIGHT_PX = 1080
+        LINE_SPACING    = 1.15
+        BULLET_GAP_PX   = 10
+        WORDS_PER_LINE  = 8   # approximate average words per wrapped line at typical font
+
+        # Find the B-type (bullets) element in the spec
+        bullet_elem = None
+        elements = style_plan.get("elements", [])
+        for elem in elements:
+            if elem.get("type") == "B":
+                bullet_elem = elem
+                break
+
+        if bullet_elem is None:
+            return ""  # no bullet region — no constraints needed
+
+        # Region height in pixels
+        box = bullet_elem.get("box", {})
+        region_h_norm = box.get("h", 0.8)
+        region_h_px   = region_h_norm * SLIDE_HEIGHT_PX
+
+        # Fixed bullet font size used by the renderer (36px).
+        # We deliberately ignore the spec's font_size here so the constraint
+        # matches what the renderer will actually render.
+        font_size = 36
+
+        # Approximate line height with spacing
+        line_h_px = int(font_size * LINE_SPACING)
+
+        # Assume ~1.5 lines per bullet on average (one wrap)
+        avg_lines_per_bullet = 1.5
+        px_per_bullet = avg_lines_per_bullet * line_h_px + BULLET_GAP_PX
+
+        max_bullets = max(1, int(region_h_px / px_per_bullet))
+
+        # Max words per bullet so it stays within 1–2 wrapped lines
+        max_words_per_bullet = 10  # enforced as hard rule in low_level_planning_prompt
+
+        # Check whether the layout also has an EQ element
+        has_eq = any(elem.get("type") == "EQ" for elem in elements)
+
+        # Count figure-type elements (F, D, CH, TAB)
+        _FIGURE_TYPES = {"F", "D", "CH", "TAB"}
+        figure_count = sum(1 for elem in elements if elem.get("type") in _FIGURE_TYPES)
+
+        lines = [
+            "## Canvas Constraints (MUST FOLLOW)",
+            f"The bullet region is {region_h_norm:.0%} of the slide height "
+            f"({region_h_px:.0f}px) at font_size={font_size}px.",
+            f"- **Maximum bullets that fit: {max_bullets}** — do NOT write more than this.",
+            f"- Each bullet must be ≤ {max_words_per_bullet} words so it fits on 1–2 lines without shrinking.",
+            "- Prefer 2–3 punchy bullets over 4–5 verbose ones.",
+        ]
+        if has_eq:
+            eq_max = max(1, max_bullets - 1)
+            lines.append(
+                f"- This layout has an EQ element: include 1–2 equations and write at most {eq_max} bullets."
+            )
+        if figure_count == 1:
+            lines.append(
+                "- This layout has **1 figure region** — assign exactly 1 figure to the `figure` key."
+            )
+        elif figure_count >= 2:
+            slot_names = ", ".join(
+                f"`figure`" if i == 0 else f"`figure_{i + 1}`"
+                for i in range(figure_count)
+            )
+            lines.append(
+                f"- This layout has **{figure_count} figure regions** — you MUST populate all "
+                f"{figure_count} figure slots: {slot_names}. "
+                f"Assign a distinct key figure from the paper to each slot."
+            )
+        return "\n".join(lines)
 
     def low_evaluate_by_llm(self, pdf_path, scene_idx, low_plan_str) -> tuple:
         prompt = prompts.low_level_evaluate_prompt + ' \n ' + low_plan_str
