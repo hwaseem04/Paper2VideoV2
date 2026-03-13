@@ -12,7 +12,7 @@
 
 ## Sample output
 
-<video controls src="assets/final_video.mp4" title="Sample output"></video>
+[Watch the demo video](assets/final_video.mp4)
 
 ## Quick Start
 
