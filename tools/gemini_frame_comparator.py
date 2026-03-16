@@ -134,7 +134,7 @@ Respond in exactly this JSON format:
         with open(config_path, "r") as f:
             cfg = yaml.safe_load(f)
 
-        # self.api_key = "***REMOVED***"
+
         self.api_key = cfg["GEMINI"]["API_KEY"]
         self.model_name = cfg["GEMINI"]["MODEL"]
         self.temperature = cfg["GEMINI"].get("TEMPERATURE", 0.0)
