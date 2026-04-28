@@ -8,7 +8,7 @@ output/*
 output/config.yml
 
 # 
-data_reference/*
+# data_reference/*
 resources/*
 tests/output/*
 
