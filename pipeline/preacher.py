@@ -1030,8 +1030,17 @@ Return ONLY valid JSON. No markdown fences. No explanation.
                             past_contents.append(json.load(f))
                     except Exception:
                         pass
-                        
-            content_draft = self.low_level_planner.low_plan_by_llm(self.pdf_path, self.scene_idx, part_plan, content_summary, style_plan, duration_stat, past_contents)
+
+            # ── Introspective QA Loop (wired via low_planning) ──────────────
+            # When self.with_reflection is True this runs the full
+            #   draft → Self-QA → "No, Revise" → ... loop from the diagram.
+            # When False it falls through to a single draft call (fast path).
+            content_draft = self.low_level_planner.low_planning(
+                self.pdf_path, self.scene_idx, part_plan, content_summary,
+                style_plan, duration_stat, past_contents,
+                with_reflection=self.with_reflection,
+                max_iterations=self.max_low_plan_iteration,
+            )
             with open(low_file, "w") as f:
                 json.dump(content_draft, f, indent=4)
         

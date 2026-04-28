@@ -9,6 +9,89 @@ class LowLevelPlanner:
         self.evaluator = evaluator_func
         self.workflow_logger = workflow_logger
 
+    def low_planning(
+        self,
+        pdf_path,
+        scene_idx,
+        part_plan,
+        content_summary,
+        style_plan,
+        duration_stat,
+        past_contents=None,
+        with_reflection: bool = False,
+        max_iterations: int = 3,
+    ) -> dict:
+        """Orchestrate Stage 3 with an optional Introspective QA Loop.
+
+        Mirrors the pattern in HighLevelPlanner.high_planning():
+          - with_reflection=False  → single call (same as before, no extra LLM cost)
+          - with_reflection=True   → draft → evaluate → revise loop up to max_iterations
+        """
+        if not with_reflection:
+            # Fast path: no reflection — single draft call (previous behaviour)
+            return self.low_plan_by_llm(
+                pdf_path, scene_idx, part_plan, content_summary,
+                style_plan, duration_stat, past_contents,
+            )
+
+        # ── Introspective QA Loop (diagram: "Self QA: Key Info Present?") ────
+        self.workflow_logger.info(
+            f"  Stage 3 (scene {scene_idx}): Introspective QA Loop "
+            f"(max_iterations={max_iterations})..."
+        )
+        content_draft = None
+        eval_results = None
+        success = False
+        iteration = 0
+
+        while not success and iteration < max_iterations:
+            self.workflow_logger.info(
+                f"  Stage 3 QA — iteration {iteration + 1}/{max_iterations}"
+            )
+
+            # Build memory context: include QA feedback on re-draft iterations
+            if eval_results is not None and iteration > 0:
+                # Inject evaluator feedback so the planner knows what to fix
+                revision_note = [{
+                    "_qa_feedback": str(eval_results),
+                    "_instruction": prompts.low_level_replanning_prompt,
+                }]
+                effective_past = (past_contents or []) + revision_note
+            else:
+                effective_past = past_contents
+
+            # Step 1 (and "No, Revise"): Draft / re-draft content
+            content_draft = self.low_plan_by_llm(
+                pdf_path, scene_idx, part_plan, content_summary,
+                style_plan, duration_stat, effective_past,
+            )
+
+            # Step 2: Self-QA evaluation ("Key Info Present?")
+            try:
+                success, eval_results = self.low_evaluate_by_llm(
+                    pdf_path, scene_idx, json.dumps(content_draft, indent=2)
+                )
+            except Exception as e:
+                self.workflow_logger.warning(
+                    f"  Stage 3 QA eval error on iter {iteration + 1}: {e}. "
+                    "Accepting draft to avoid infinite loop."
+                )
+                success = True  # fail-safe: never loop forever on eval errors
+
+            self.workflow_logger.info(
+                f"  Stage 3 QA scene {scene_idx} iter {iteration + 1}: "
+                f"{'PASS — finalising ✓' if success else 'FAIL — revising...'}"
+            )
+            iteration += 1
+
+        if not success:
+            self.workflow_logger.warning(
+                f"  Stage 3 QA Loop hit max_iterations={max_iterations} "
+                f"for scene {scene_idx}. Using last draft as-is."
+            )
+
+        return content_draft
+
     def low_plan_by_llm(self, pdf_path, scene_idx, part_plan, content_summary, style_plan, duration_stat, past_contents=None) -> dict:
         """Stage 3: Draft content (bullets, audio, figures) within the decided layout."""
         
