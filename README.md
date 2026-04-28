@@ -168,4 +168,6 @@ You should be having Gemini key and free alibaba key to run the script. If you a
 
 ## Acknowledgement
 
-This is a follow-up work of Preacher (ICCV 2025)
+This work is a follow-up to Preacher (ICCV 2025). The codebase builds on Preacher’s original framework, which incorporates both high-level and low-level planning.
+
+We extend this setup by introducing style planning using a reference database, style refinement mechanisms, and an introspective QA loop to improve content grounding.
