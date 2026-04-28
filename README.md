@@ -1,4 +1,4 @@
-# Self Reflective Agent for Scientific Communication
+# PIVOT: Planning Intelligent Visual Orchestrations for Translating Papers to Video
 
 ## Architecture
 
