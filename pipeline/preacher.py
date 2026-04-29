@@ -694,13 +694,44 @@ class Preacher:
                 "with the dict: {'type': TABLE/IMAGE, 'number': INT}"
                 "where a is TABLE or IMAGE, and b is its index."
             )
-            crop_dict = eval(
-            self.planner(
+            raw_crop = self.planner(
                 prompt=prompt_r,
                 pdf_path=Path(self.pdf_path),
-            ))
-            result = _load_json_dict(crop_dict)
-            image_path = get_specific_element(self.pdf_path, result['type'], result['number'], image_path)
+            )
+
+            # Normalize planner output. It can arrive as:
+            # 1) dict: {"type": "...", "number": ...}
+            # 2) list: [{"type": "...", "number": ...}, ...]
+            # 3) stringified JSON/Python literal.
+            result = None
+            if isinstance(raw_crop, dict):
+                result = raw_crop
+            elif isinstance(raw_crop, list):
+                result = raw_crop[0] if raw_crop else None
+            else:
+                try:
+                    parsed = _load_json_dict(str(raw_crop))
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    result = parsed
+                elif isinstance(parsed, list):
+                    result = parsed[0] if parsed else None
+
+            if isinstance(result, dict) and "type" in result and "number" in result:
+                image_path = get_specific_element(
+                    self.pdf_path,
+                    str(result["type"]),
+                    int(result["number"]),
+                    image_path
+                )
+            else:
+                self.workflow_logger.warning(
+                    f"Failed to parse source locator for scene {scene_idx}. "
+                    f"Using generated image fallback. Raw output: {str(raw_crop)[:300]}"
+                )
+                image_url = self.captioning_single_work(plan, eval_results)
+                image_path = download_file(image_url, image_path)
             
         else:
             if not eval_results:
@@ -808,4 +839,3 @@ class Preacher:
     # def tolist(self, high_plan: str) -> list:
     #     if self.plan_by=='GEMINI':
     #         return text_to_list(high_plan)
-
